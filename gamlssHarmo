@@ -1,0 +1,78 @@
+#!/usr/bin/env Rscript
+
+get_script_dir <- function() {
+  args     <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0)
+    return(normalizePath(dirname(sub("^--file=", "", file_arg[1]))))
+  normalizePath(".")
+}
+
+SCRIPT_DIR <- get_script_dir()
+
+print_help <- function() {
+  cat("
+gamlssHarmo -- GAMLSS-based Harmonisation and Normative Modelling
+
+Usage:
+  gamlssHarmo <stage> [options]
+
+Stages:
+  fit     Fit hierarchical GAMLSS models (one per feature)
+  infer   Apply harmonisation and compute normative scores
+  plot    Plot pre/post age trajectories
+
+Run stage-specific help:
+  gamlssHarmo fit   --help
+  gamlssHarmo infer --help
+  gamlssHarmo plot  --help
+
+Examples:
+  gamlssHarmo fit   --data data/raw/my_data.csv
+  gamlssHarmo infer --data data/raw/my_data.csv
+  gamlssHarmo plot  --pre data/raw/my_data.csv --post output/harmonised/combined_harmonised.csv
+")
+}
+
+all_args     <- commandArgs(trailingOnly = TRUE)
+valid_stages <- c("fit", "infer", "plot")
+
+if (length(all_args) == 0 || all_args[1] %in% c("--help", "-h")) {
+  print_help()
+  quit(status = 0)
+}
+
+stage <- all_args[1]
+
+if (!stage %in% valid_stages) {
+  cat("Unknown stage '", stage, "'. Valid stages: ",
+      paste(valid_stages, collapse = ", "), "\n", sep = "")
+  quit(status = 1)
+}
+
+stage_args <- all_args[-1]
+
+stage_scripts <- list(
+  fit   = file.path(SCRIPT_DIR, "scripts", "01_fit.R"),
+  infer = file.path(SCRIPT_DIR, "scripts", "02_infer.R"),
+  plot  = file.path(SCRIPT_DIR, "scripts", "03_plot.R")
+)
+
+runner <- stage_scripts[[stage]]
+
+if (!file.exists(runner))
+  stop("Runner script not found: ", runner)
+
+local({
+  real_commandArgs <- commandArgs
+  shim <- function(trailingOnly = FALSE) {
+    if (trailingOnly) return(stage_args)
+    real_commandArgs(trailingOnly = FALSE)
+  }
+  assignInNamespace("commandArgs", shim, ns = "base")
+  on.exit(assignInNamespace("commandArgs", real_commandArgs, ns = "base"), add = TRUE)
+
+  runner_env <- new.env(parent = globalenv())
+  runner_env$SCRIPT_DIR <- SCRIPT_DIR
+  source(runner, local = runner_env, chdir = FALSE)
+})

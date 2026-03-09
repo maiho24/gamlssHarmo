@@ -1,0 +1,15 @@
+name: gamlssHarmo
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - r-base=4.4.2
+  - r-gamlss
+  - r-gamlss.dist
+  - r-dplyr
+  - r-ggplot2
+  - r-scales
+  - r-rcolorbrewer
+  - r-yaml
+  - r-optparse
+  - r-logger

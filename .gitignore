@@ -1,0 +1,16 @@
+# Data (never commit raw or harmonised patient data)
+data/raw/
+data/harmonised/
+
+# All generated outputs
+output/
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# R session artefacts
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
