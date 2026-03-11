@@ -33,21 +33,24 @@ prepare_trajectory_data <- function(pre_data = NULL, post_data = NULL,
   }
 
   if (!is.null(post_data)) {
-    # Wide format: feature columns are named <feature>.<stat>
-    harm_col <- paste0(feature_name, ".harmonised_value")
-    if (!harm_col %in% names(post_data))
-      stop("Column '", harm_col, "' not found in post_data")
-    required <- c(id_var, "batch", "age", "sex", harm_col)
-    missing  <- setdiff(required, names(post_data))
+    # combined_harmonised.csv now uses plain feature names as column headers,
+    # with meta columns id, batch, age, sex (and optionally wave).
+    if (!feature_name %in% names(post_data))
+      stop("Column '", feature_name, "' not found in post_data. ",
+           "Available columns: ", paste(names(post_data), collapse = ", "))
+
+    batch_col <- if ("batch" %in% names(post_data)) "batch" else batch_var
+    required  <- c(id_var, batch_col, "age", "sex", feature_name)
+    missing   <- setdiff(required, names(post_data))
     if (length(missing) > 0)
       stop("post_data missing columns: ", paste(missing, collapse = ", "))
 
     out <- rbind(out, data.frame(
       id        = post_data[[id_var]],
-      group     = as.character(post_data$batch),
+      group     = as.character(post_data[[batch_col]]),
       age       = post_data$age,
       sex       = post_data$sex,
-      value     = post_data[[harm_col]],
+      value     = post_data[[feature_name]],
       data_type = "Post-Harmonisation",
       stringsAsFactors = FALSE
     ))

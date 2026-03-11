@@ -273,9 +273,21 @@ harmonise_all_gamlss_models <- function(model_base_dir, data,
     stop("No model files found in: ", model_base_dir)
 
   if (!is.null(feature_subset)) {
-    pattern     <- paste(paste0("feature_", feature_subset, "/"), collapse = "|")
-    model_files <- model_files[grepl(pattern, model_files)]
+    # Trim whitespace from feature names and match against the dirname of each
+    # model file rather than building a fragile regex with path separators
+    feature_subset <- trimws(feature_subset)
+    model_feat     <- gsub("_model\\.rds$", "", basename(model_files))
+    model_files    <- model_files[model_feat %in% feature_subset]
+    missing        <- setdiff(feature_subset, model_feat)
+    if (length(missing) > 0)
+      logger::log_info(paste0("  Warning: no model found for: ",
+                              paste(missing, collapse = ", ")))
   }
+
+  if (length(model_files) == 0)
+    stop("No model files matched the requested features. ",
+         "Check that --features names match the feature columns used during fitting, ",
+         "and that --models points to the correct directory.")
 
   logger::log_info(paste0("Harmonising ", length(model_files), " features"))
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -342,65 +354,140 @@ harmonise_all_gamlss_models <- function(model_base_dir, data,
                  output_dir = output_dir))
 }
 
+# Determine join keys from a data frame: always id + batch, plus wave if present.
+get_join_keys <- function(df, id_var) {
+  keys <- c(id_var, "batch")
+  if ("wave" %in% names(df)) keys <- c(keys, "wave")
+  keys
+}
+
+merge_wide <- function(existing, new_data, join_keys) {
+  new_feat_cols <- setdiff(names(new_data), join_keys)
+
+  cols_to_drop  <- intersect(names(existing), new_feat_cols)
+  if (length(cols_to_drop) > 0) {
+    logger::log_info(paste0("  Overwriting existing columns: ",
+                            paste(cols_to_drop, collapse = ", ")))
+    existing <- existing[, !names(existing) %in% cols_to_drop, drop = FALSE]
+  }
+
+  merged <- merge(existing, new_data, by = join_keys, all = TRUE)
+  merged
+}
+
+# combine_harmonised_results: assembles per-feature CSVs into wide-format tables.
+# Merges with any existing combined CSV from previous runs (same subjects,
+# new feature columns). Newer results overwrite older ones for the same feature.
+#
+# Join keys: id_var + batch, plus wave if present in the data.
 combine_harmonised_results <- function(harmonised_output_dir,
                                        id_var                    = "id",
-                                       generate_normative_scores = TRUE) {
+                                       generate_normative_scores = TRUE,
+                                       feature_subset            = NULL) {
   logger::log_info(paste0("Combining harmonised results (wide format)"))
 
-  files <- list.files(harmonised_output_dir, pattern = "_harmonised\\.csv$",
-                      recursive = TRUE, full.names = TRUE)
-  if (length(files) == 0)
+  all_files <- list.files(harmonised_output_dir, pattern = "_harmonised\\.csv$",
+                          recursive = TRUE, full.names = TRUE)
+  if (length(all_files) == 0)
     stop("No harmonised CSV files found in: ", harmonised_output_dir)
 
-  meta_cols  <- c(id_var, "batch", "age", "sex", "wave")
-  norm_cols  <- c("normative_z_score", "normative_centile")
+  # Restrict to features processed in this run
+  if (!is.null(feature_subset) && length(feature_subset) > 0) {
+    keep      <- paste(paste0("^", feature_subset, "_harmonised\\.csv$"),
+                       collapse = "|")
+    all_files <- all_files[grepl(keep, basename(all_files))]
+  }
 
-  all_data   <- lapply(files, read.csv, stringsAsFactors = FALSE)
-  found_meta <- Reduce(intersect, lapply(all_data, function(d)
-    intersect(meta_cols, names(d))))
+  if (length(all_files) == 0)
+    stop("No matching harmonised CSV files found for the requested features.")
 
-  n_rows <- nrow(all_data[[1]])
-  if (!all(sapply(all_data, nrow) == n_rows))
-    stop("Per-feature CSVs have different row counts -- ensure the same input ",
-         "data and filtering were used across all features.")
 
-  wide_harm <- all_data[[1]][, found_meta, drop = FALSE]
-  wide_norm <- all_data[[1]][, found_meta, drop = FALSE]
+  # Build wide tables for this run only
+  all_data   <- lapply(all_files, read.csv, stringsAsFactors = FALSE)
+  first_df   <- all_data[[1]]
+  join_keys  <- get_join_keys(first_df, id_var)
 
-  for (i in seq_along(files)) {
+  logger::log_info(paste0("  Join keys: ", paste(join_keys, collapse = ", ")))
+
+  row_counts <- sapply(all_data, nrow)
+  if (length(unique(row_counts)) > 1) {
+    logger::log_info(paste0("  Note: features have differing row counts (min=",
+                            min(row_counts), ", max=", max(row_counts),
+                            ") -- merging by key, missing values filled with NA"))
+  }
+
+  # Collect all unique rows across all feature files to form the master key table
+  all_keys <- unique(do.call(rbind, lapply(all_data, function(d) {
+    extra  <- c("age", "sex")[c("age", "sex") %in% names(d)]
+    d[, unique(c(join_keys, extra)), drop = FALSE]
+  })))
+
+  # Meta columns to carry through (beyond join keys)
+  extra_meta <- c("age", "sex")
+  meta_cols  <- unique(c(join_keys, extra_meta))
+  meta_cols  <- meta_cols[meta_cols %in% names(first_df)]
+
+  new_harm <- all_keys[, meta_cols[meta_cols %in% names(all_keys)], drop = FALSE]
+  new_norm <- all_keys[, meta_cols[meta_cols %in% names(all_keys)], drop = FALSE]
+
+  for (i in seq_along(all_files)) {
     dat       <- all_data[[i]]
-    feat_name <- gsub("_harmonised\\.csv$", "", basename(files[i]))
+    feat_name <- gsub("_harmonised\\.csv$", "", basename(all_files[i]))
 
     if ("harmonised_value" %in% names(dat)) {
-      h <- dat[, "harmonised_value", drop = FALSE]
-      names(h) <- feat_name
-      wide_harm <- cbind(wide_harm, h)
+      h        <- dat[, c(join_keys, "harmonised_value"), drop = FALSE]
+      names(h)[names(h) == "harmonised_value"] <- feat_name
+      new_harm <- merge(new_harm, h, by = join_keys, all = TRUE)
     }
 
-    if (generate_normative_scores) {
-      avail <- norm_cols[norm_cols %in% names(dat)]
-      if (length(avail) > 0) {
-        n <- dat[, avail, drop = FALSE]
-        names(n) <- paste0(feat_name, ".", avail)
-        wide_norm <- cbind(wide_norm, n)
-      }
+    # Only normative_z_score is used; column named after the feature directly
+    if (generate_normative_scores && "normative_z_score" %in% names(dat)) {
+      n        <- dat[, c(join_keys, "normative_z_score"), drop = FALSE]
+      names(n)[names(n) == "normative_z_score"] <- feat_name
+      new_norm <- merge(new_norm, n, by = join_keys, all = TRUE)
     }
   }
 
   harm_path <- file.path(harmonised_output_dir, "combined_harmonised.csv")
-  write.csv(wide_harm, harm_path, row.names = FALSE)
-  logger::log_info(paste0("Saved: ", harm_path,
-                          " (", nrow(wide_harm), " rows, ",
-                          length(files), " features)"))
+  norm_path <- file.path(harmonised_output_dir, "combined_normative.csv")
 
-  if (generate_normative_scores) {
-    norm_path <- file.path(harmonised_output_dir, "combined_normative.csv")
-    write.csv(wide_norm, norm_path, row.names = FALSE)
-    logger::log_info(paste0("Saved: ", norm_path,
-                            " (", nrow(wide_norm), " rows, ",
-                            length(files), " features)"))
+  # Merge with existing combined files if they exist (cross-run accumulation)
+  if (file.exists(harm_path)) {
+    logger::log_info(paste0("  Found existing combined_harmonised.csv -- merging"))
+    existing_harm <- read.csv(harm_path, stringsAsFactors = FALSE)
+    new_harm      <- merge_wide(existing_harm, new_harm, join_keys)
   }
 
-  invisible(list(harmonised = wide_harm,
-                 normative  = if (generate_normative_scores) wide_norm else NULL))
+  if (generate_normative_scores && file.exists(norm_path)) {
+    logger::log_info(paste0("  Found existing combined_normative.csv -- merging"))
+    existing_norm <- read.csv(norm_path, stringsAsFactors = FALSE)
+    new_norm      <- merge_wide(existing_norm, new_norm, join_keys)
+  }
+
+  reorder_cols <- function(df, meta) {
+    meta_present <- meta[meta %in% names(df)]
+    feat_present <- sort(setdiff(names(df), meta_present))
+    df[, c(meta_present, feat_present), drop = FALSE]
+  }
+
+  new_harm <- reorder_cols(new_harm, meta_cols)
+  new_norm <- reorder_cols(new_norm, meta_cols)
+
+  n_feat_harm <- ncol(new_harm) - length(meta_cols[meta_cols %in% names(new_harm)])
+  n_feat_norm <- length(all_files)
+
+  write.csv(new_harm, harm_path, row.names = FALSE)
+  logger::log_info(paste0("Saved: ", harm_path,
+                          " (", nrow(new_harm), " rows, ",
+                          n_feat_harm, " features)"))
+
+  if (generate_normative_scores) {
+    write.csv(new_norm, norm_path, row.names = FALSE)
+    logger::log_info(paste0("Saved: ", norm_path,
+                            " (", nrow(new_norm), " rows, ",
+                            n_feat_norm, " features)"))
+  }
+
+  invisible(list(harmonised = new_harm,
+                 normative  = if (generate_normative_scores) new_norm else NULL))
 }

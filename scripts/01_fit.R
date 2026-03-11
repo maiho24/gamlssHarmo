@@ -1,20 +1,4 @@
 #!/usr/bin/env Rscript
-# gamlssHarmo fit -- Fit hierarchical GAMLSS harmonisation models
-#
-
-#
-# Options:
-#   --config        Path to params.yml  [config/params.yml]
-#   --data          Raw input CSV
-#   --output        Base output directory
-#   --features      Features .txt file
-#   --feature       Single feature name (overrides --features)
-#   --batch_var     Batch/site column name
-#   --longitudinal  TRUE or FALSE
-#   --log_transform TRUE or FALSE
-#   --family_order  Comma-separated e.g. "SHASH,GG,NO"
-#   --n_cores       Parallel cores
-
 suppressPackageStartupMessages({
   library(optparse)
   library(yaml)
@@ -30,8 +14,17 @@ get_root <- function() {
                              inherits = TRUE)))
   args     <- commandArgs(trailingOnly = FALSE)
   file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0)
-    return(normalizePath(dirname(dirname(sub("^--file=", "", file_arg[1])))))
+  if (length(file_arg) > 0) {
+    script_path <- normalizePath(sub("^--file=", "", file_arg[1]), mustWork = FALSE)
+    return(dirname(dirname(script_path)))
+  }
+  for (i in seq_len(sys.nframe())) {
+    f <- sys.frame(i)
+    if (exists("ofile", envir = f, inherits = FALSE)) {
+      script_path <- normalizePath(get("ofile", envir = f), mustWork = FALSE)
+      return(dirname(dirname(script_path)))
+    }
+  }
   normalizePath(".")
 }
 
@@ -42,31 +35,105 @@ source(file.path(ROOT, "R", "fit.R"))
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
 option_list <- list(
-  make_option("--config",        type = "character", default = NULL),
-  make_option("--data",          type = "character", default = NULL),
-  make_option("--output",        type = "character", default = NULL),
-  make_option("--features",      type = "character", default = NULL),
-  make_option("--feature",       type = "character", default = NULL),
-  make_option("--batch_var",     type = "character", default = NULL),
-  make_option("--longitudinal",  type = "character", default = NULL),
-  make_option("--log_transform", type = "character", default = NULL),
-  make_option("--family_order",  type = "character", default = NULL),
-  make_option("--n_cores",       type = "integer",   default = NULL)
+  make_option("--config",
+    type    = "character",
+    default = NULL,
+    metavar = "PATH",
+    help    = "Path to params.yml config file. [default: config/params.yml]"),
+
+  make_option("--data",
+    type    = "character",
+    default = NULL,
+    metavar = "PATH",
+    help    = "Path to raw input CSV. Must contain columns: id, age, sex, <batch_var>, and at least one feature column. [required]"),
+
+  make_option("--output",
+    type    = "character",
+    default = NULL,
+    metavar = "PATH",
+    help    = "Base output directory. Subdirectories models/, logs/ are created automatically beneath it. [default: output/]"),
+
+  make_option("--features-file",
+    type    = "character",
+    default = NULL,
+    metavar = "PATH",
+    help    = "Path to a .txt file listing feature column names to fit, one per line. Lines starting with '#' are ignored. Overridden by --feature."),
+
+  make_option("--one-feature",
+    type    = "character",
+    default = NULL,
+    metavar = "NAME",
+    help    = "Single feature column name to fit. Overrides --features and config."),
+
+  make_option("--batch_var",
+    type    = "character",
+    default = NULL,
+    metavar = "NAME",
+    help    = "Column name identifying the batch/site/scanner variable. [default: cohort]"),
+
+  make_option("--longitudinal",
+    type    = "character",
+    default = NULL,
+    metavar = "TRUE/FALSE",
+    help    = "If TRUE, uses formulas_longitudinal from config, which adds a random subject effect to mu. [default: FALSE]"),
+
+  make_option("--log_transform",
+    type    = "character",
+    default = NULL,
+    metavar = "TRUE/FALSE",
+    help    = "If TRUE, applies log(y+1) to the feature before z-standardising. Useful for skewed or zero-bounded features. [default: FALSE]"),
+
+  make_option("--family_order",
+    type    = "character",
+    default = NULL,
+    metavar = "LIST",
+    help    = "Comma-separated list of GAMLSS distribution families to try, in order. Fitting stops at first convergence. Supported: SHASH, GG, NO, TF, LOGNO, GA, BCT, BCPE, BCCG, SN1, ST3, ST4, WEI, IG, LO, EGB2, EXP. [default: SHASH,GG,NO]"),
+
+  make_option("--n_cores",
+    type    = "integer",
+    default = NULL,
+    metavar = "N",
+    help    = "Number of parallel cores to use. 1 runs sequentially. Values >1 use parallel::parLapply. [default: 1]")
 )
 
 opt <- parse_args(OptionParser(
-  usage = "Rscript scripts/01_fit.R [options]",
+  usage       = "gamlssHarmo fit [options]\n       Rscript scripts/01_fit.R [options]",
   option_list = option_list,
-  description = "Fit hierarchical GAMLSS harmonisation models."
+  description = paste(
+    "Fit hierarchical GAMLSS harmonisation models, one per feature.",
+    "",
+    "Models are fitted using a family fallback strategy: families in --family_order",
+    "are tried in sequence and fitting stops at first convergence. Within each",
+    "multi-parameter family, nu/tau formula complexity is reduced automatically",
+    "if the full specification fails to converge.",
+    "",
+    "Output (written to <output>/models/):",
+    "  feature_<name>/<name>_model.rds       Fitted model object",
+    "  feature_<name>/<name>_scaling.csv     y_mean, y_sd, log_transform flag",
+    "  feature_<name>/<name>_metrics.csv     AIC, BIC, MSE, distribution used",
+    "  feature_<name>/<name>_predictions.csv In-sample fitted values",
+    "  feature_<name>/<name>_diagnostics.pdf Residual diagnostic plots",
+    "  model_summary.csv                     Summary across all features",
+    "",
+    "Examples:",
+    "  gamlssHarmo fit --data data/raw/my_data.csv",
+    "  gamlssHarmo fit --data data/raw/my_data.csv --feature ThicknessAvg",
+    "  gamlssHarmo fit --data data/raw/my_data.csv --batch_var site --n_cores 8",
+    "  gamlssHarmo fit --data data/raw/my_data.csv --family_order NO",
+    sep = "\n"
+  ),
+  epilogue = "All options can also be set in config/params.yml. CLI arguments always take priority."
 ))
 
 cfg_path <- opt$config %||% file.path(ROOT, "config", "params.yml")
 cfg      <- load_config(cfg_path)
 
 raw_csv        <- resolve_arg(opt$data,          cfg$data$raw_csv)
-output_dir     <- resolve_arg(opt$output,        cfg$output$base,      "output")
-features_txt   <- resolve_arg(opt$features,      cfg$features$features_txt)
-feature_single <- resolve_arg(opt$feature,       cfg$features$feature)
+base_dir       <- normalizePath(resolve_arg(opt$output, cfg$output$base, "output"), mustWork = FALSE)
+models_dir     <- file.path(base_dir, "models")
+log_dir        <- file.path(base_dir, "logs")
+features_txt   <- resolve_arg(opt$features_file, cfg$features$features_txt)
+feature_single <- resolve_arg(opt$one_feature,   cfg$features$feature)
 batch_var      <- resolve_arg(opt$batch_var,     cfg$model$batch_var,  "cohort")
 id_var         <-                                cfg$model$id_var %||% "id"
 longitudinal   <- as.logical(resolve_arg(opt$longitudinal,  cfg$model$longitudinal,  FALSE))
@@ -76,12 +143,13 @@ family_order   <- if (!is.null(opt$family_order))
   trimws(strsplit(opt$family_order, ",")[[1]]) else
   cfg$model$family_order %||% c("SHASH", "GG", "NO")
 
-log_dir <- cfg$output$logs %||% file.path(output_dir, "logs")
 setup_logging(log_dir, "fit")
 
 log_info("=== gamlssHarmo fit ===")
 log_info(paste0("config:        ", cfg_path))
 log_info(paste0("data:          ", raw_csv %||% "(not set)"))
+log_info(paste0("output base:   ", base_dir))
+log_info(paste0("models dir:    ", models_dir))
 log_info(paste0("batch_var:     ", batch_var))
 log_info(paste0("longitudinal:  ", longitudinal))
 log_info(paste0("log_transform: ", log_transform))
@@ -97,12 +165,22 @@ data <- read.csv(raw_csv, stringsAsFactors = FALSE)
 log_info(paste0("Loaded: ", nrow(data), " rows x ", ncol(data), " cols"))
 
 meta_cols <- get_meta_cols(batch_var, id_var, data)
-features  <- resolve_features(
-  feature_arg   = feature_single,
-  features_file = features_txt,
-  data          = data,
-  meta_cols     = meta_cols
-)
+
+# Resolve features: CLI --feature takes priority over --features file,
+# which takes priority over config, which falls back to all data columns.
+features <- if (!is.null(opt$one_feature) && nzchar(opt$one_feature)) {
+  opt$feature
+} else if (!is.null(opt$features_file) && nzchar(opt$features_file)) {
+  if (!file.exists(opt$features_file))
+    stop("Features file not found: ", opt$features_file)
+  read_features_file(opt$features_file)
+} else if (!is.null(cfg$features$features_txt) && nzchar(cfg$features$features_txt) &&
+           file.exists(cfg$features$features_txt)) {
+  read_features_file(cfg$features$features_txt)
+} else {
+  setdiff(names(data), meta_cols)
+}
+
 log_info(paste0("Features: ", length(features)))
 
 formula_terms <- parse_and_validate_formulas(cfg, data, longitudinal)
@@ -111,7 +189,7 @@ log_info("Formulas validated")
 results <- run_gamlss_harmonisation(
   data          = data,
   features      = features,
-  output_dir    = file.path(output_dir, "models"),
+  output_dir    = models_dir,
   formula_terms = formula_terms,
   batch_var     = batch_var,
   id_var        = id_var,
