@@ -3,6 +3,10 @@
 A reproducible R framework for multi-cohort neuroimaging harmonisation and normative
 modelling using hierarchical GAMLSS models.
 
+> This software supports the publication:
+> **Unified Multi-Cohort Harmonisation and Normative Modelling of Neuroimaging Data via Hierarchical GAMLSS** — Mai P. Ho, et al. (2026)
+> Preprint: [bioRxiv link](https://www.biorxiv.org/content/10.64898/2026.03.08.710422v1)
+
 ---
 
 ## Quick start
