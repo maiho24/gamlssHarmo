@@ -4,32 +4,47 @@
 
 data:
   raw_csv:        "data/raw/my_data.csv"
-  harmonised_csv: ""
+  harmonised_csv: ""                        # path to combined_harmonised.csv for plot --post
 
 output:
-  base:       "/your/output/path"
-  # models:     "/your/output/path/models"
-  # harmonised: "/your/output/path/harmonised"
-  # plots:      "/your/output/path/plots"
-  # logs:       "/your/output/path/logs"
+  base: "output"
+  # Subdirectories are created automatically under base/:
+  #   models/       fitted model objects and metrics
+  #   harmonised/   harmonised CSVs and normative scores
+  #   plots/        trajectory PNGs
+  #   logs/         per-stage timestamped log files
+  # Override any individual path by uncommenting below:
+  # models:       "output/models"
+  # harmonised:   "output/harmonised"
+  # plots:        "output/plots"
+  # logs:         "output/logs"
 
-# Feature selection.
-# features_txt: one feature name per line; lines starting with '#' are ignored.
-# feature:      single feature override (takes priority over features_txt).
-# If both are blank, all non-metadata columns are used.
+# Feature selection (applied to fit, infer, and plot stages).
+# features_txt: path to a .txt file with one feature name per line;
+#               lines starting with '#' are ignored.
+# feature:      single feature override -- takes priority over features_txt.
+# If both are empty, all non-metadata columns in the data CSV are used.
 features:
   features_txt: "config/features.txt"
   feature:      ""
 
 model:
-  batch_var:     "cohort"   # column identifying batch/site/scanner
-  id_var:        "id"       # subject ID column (passthrough; enters formulas only if listed)
-  age_var:      "age"
-  longitudinal: false      # if true, formulas_longitudinal is used instead of formulas
-  log_transform: false      # apply log(y+1) before z-standardising
+  batch_var:     "cohort"   # column identifying the batch/site/scanner effect
+  id_var:        "id"       # subject ID column; use {id} placeholder in formulas
+  # age_var is not read directly -- use "age" as the column name in your CSV
+  # and reference it as pb(age) or age in formula terms below.
+  longitudinal:  false      # if true, formulas_longitudinal is used instead of formulas
+  log_transform: false      # apply log(y+1) before z-standardising (useful for skewed features)
 
-  # Ordered list of distribution families. The fitter stops at first convergence.
-  # Within each family, nu/tau specs are tried in decreasing complexity automatically.
+  # Ordered list of distribution families to try. Fitting stops at first convergence.
+  # Within each multi-parameter family, nu/tau formula complexity is reduced
+  # automatically if the full spec fails:
+  #   SHASH/BCT/BCPE/ST4/EGB2 (4-param): full -> nu_only -> tau_only -> intercept
+  #   GG/SN1/TF/ST3/BCCG      (3-param): nu -> intercept
+  #   All others               (2-param): fitted directly
+  #
+  # Supported families: SHASH, GG, NO, TF, LOGNO, GA, BCT, BCPE, BCCG,
+  #                     SN1, ST3, ST4, WEI, IG, LO, EGB2, EXP
   family_order:
     - "SHASH"
     - "GG"
@@ -37,25 +52,34 @@ model:
 
   # Per-parameter formula term lists.
   # Terms are joined with '+' to form the RHS of each distributional parameter.
-  # Placeholders: {batch} -> batch_var, {id} -> id_var
-  # null means intercept-only (~ 1). Term lists are used exactly as written.
+  # Placeholders: {batch} -> batch_var value, {id} -> id_var value
+  # Set a parameter to null for intercept-only (equivalent to ~ 1).
+  # Term lists are used exactly as written -- no implicit terms are added.
+  #
+  # Examples:
+  #   null                              -> ~ 1
+  #   ["pb(age)", "sex"]                -> ~ pb(age) + sex
+  #   ["random({batch})"]               -> ~ random(cohort)
+  #   ["pb(age)", "sex", "{batch}"]     -> ~ pb(age) + sex + cohort  (fixed effect)
   formulas:
     mu:    ["pb(age)", "sex", "random({batch})"]
-    sigma: ["random({batch})", "pb(age)", "sex"]
+    sigma: ["pb(age)", "sex", "random({batch})"]
     nu:    ["random({batch})"]
     tau:   ["random({batch})"]
 
+  # Used when --longitudinal TRUE is passed. Adds a random subject effect to mu
+  # to account for repeated measures within subjects.
   formulas_longitudinal:
     mu:    ["pb(age)", "sex", "random({batch})", "random({id})"]
-    sigma: ["random({batch})", "pb(age)", "sex"]
+    sigma: ["pb(age)", "sex", "random({batch})"]
     nu:    ["random({batch})"]
     tau:   ["random({batch})"]
 
 compute:
-  n_cores: 1
+  n_cores: 1   # set >1 to use parallel::parLapply across features
 
 plot:
-  group_col:     "cohort"
+  group_col:     "cohort"   # column to colour/group age trajectories by
   smooth_method: "loess"    # loess or gam
-  age_bin_width: 5
-  fix_y_limits:  true
+  age_bin_width: 5          # age bin width in years for computing mean +/- SE
+  fix_y_limits:  true       # lock y-axis range across pre/post panels for direct comparison
