@@ -63,16 +63,7 @@ runner <- stage_scripts[[stage]]
 if (!file.exists(runner))
   stop("Runner script not found: ", runner)
 
-local({
-  real_commandArgs <- commandArgs
-  shim <- function(trailingOnly = FALSE) {
-    if (trailingOnly) return(stage_args)
-    real_commandArgs(trailingOnly = FALSE)
-  }
-  assignInNamespace("commandArgs", shim, ns = "base")
-  on.exit(assignInNamespace("commandArgs", real_commandArgs, ns = "base"), add = TRUE)
+args_str <- paste(sapply(stage_args, shQuote), collapse = " ")
+cmd      <- paste("Rscript", shQuote(runner), args_str)
 
-  runner_env <- new.env(parent = globalenv())
-  runner_env$SCRIPT_DIR <- SCRIPT_DIR
-  source(runner, local = runner_env, chdir = FALSE)
-})
+quit(status = system(cmd))

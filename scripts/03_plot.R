@@ -85,11 +85,11 @@ log_dir <- cfg$output$logs %||% file.path(dirname(output_dir), "logs")
 setup_logging(log_dir, "plot")
 
 log_info("=== gamlssHarmo plot ===")
-log_info("pre:           ", pre_csv  %||% "(not provided)")
-log_info("post:          ", post_csv %||% "(not provided)")
-log_info("group_col:     ", group_col)
-log_info("smooth_method: ", smooth_method)
-log_info("age_bin_width: ", age_bin_width)
+log_info(paste0("pre:           ", pre_csv  %||% "(not provided)"))
+log_info(paste0("post:          ", post_csv %||% "(not provided)"))
+log_info(paste0("group_col:     ", group_col))
+log_info(paste0("smooth_method: ", smooth_method))
+log_info(paste0("age_bin_width: ", age_bin_width))
 
 has_pre  <- !is.null(pre_csv)  && nzchar(pre_csv)  && file.exists(pre_csv)
 has_post <- !is.null(post_csv) && nzchar(post_csv) && file.exists(post_csv)
@@ -105,7 +105,6 @@ meta_cols <- get_meta_cols(batch_var, id_var, pre_data %||% post_data)
 all_features <- if (!is.null(pre_data)) {
   setdiff(names(pre_data), meta_cols)
 } else if (!is.null(post_data)) {
-  # Wide format: harmonised columns are named <feature>.harmonised_value
   harm_cols <- grep("\\.harmonised_value$", names(post_data), value = TRUE)
   sub("\\.harmonised_value$", "", harm_cols)
 } else {
@@ -120,7 +119,7 @@ features <- if (!is.null(feature_single) && nzchar(feature_single)) {
   all_features
 }
 
-log_info("Features to plot: ", length(features))
+log_info(paste0("Features to plot: ", length(features)))
 
 plot_trajectories(
   features      = features,
@@ -135,4 +134,4 @@ plot_trajectories(
   fix_y_limits  = fix_y_limits
 )
 
-log_info("=== plot complete === saved to: ", output_dir)
+log_info(paste0("=== plot complete === saved to: ", output_dir))

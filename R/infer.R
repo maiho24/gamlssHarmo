@@ -55,10 +55,11 @@ has_random_in_fitted <- function(model, param_name, batch_var) {
 }
 
 compute_harmonised_param <- function(model, model_data, param_name, batch_var) {
-  logger::log_info("  Harmonising: ", param_name)
+  logger::log_info(paste0("  Harmonising: ", param_name))
 
   if (!has_random_in_fitted(model, param_name, batch_var)) {
-    logger::log_info("  No random(", batch_var, ") in ", param_name, " -- using original")
+    logger::log_info(paste0("  No random(", batch_var, ") in ", param_name,
+                            " -- using original"))
     return(predict(model, what = param_name, type = "response", newdata = model_data))
   }
 
@@ -74,12 +75,12 @@ compute_harmonised_param <- function(model, model_data, param_name, batch_var) {
     col_idx <- which(grepl(paste0("random.*", batch_var),
                            colnames(pred_terms), ignore.case = TRUE))
     if (length(col_idx) == 1 && nrow(pred_terms) == length(pred_link)) {
-      logger::log_info("  Removed random(", batch_var, ") via terms matrix")
+      logger::log_info(paste0("  Removed random(", batch_var, ") via terms matrix"))
       return(apply_inverse_link(model, param_name, pred_link - pred_terms[, col_idx]))
     }
   }
 
-  logger::log_info("  Falling back to manual coefficient subtraction")
+  logger::log_info(paste0("  Falling back to manual coefficient subtraction"))
   all_coefs  <- coef(model, what = param_name)
   rand_names <- names(all_coefs)[grepl(paste0("random\\(", batch_var, "\\)"),
                                        names(all_coefs))]
@@ -90,7 +91,7 @@ compute_harmonised_param <- function(model, model_data, param_name, batch_var) {
       effect  <- all_coefs[rand_names[match_idx[1]]]
       obs_idx <- which(model_data[[batch_var]] == batch_level)
       harmonised_link[obs_idx] <- harmonised_link[obs_idx] - effect
-      logger::log_info("  '", batch_level, "' effect: ", round(effect, 4))
+      logger::log_info(paste0("  '", batch_level, "' effect: ", round(effect, 4)))
     }
   }
   apply_inverse_link(model, param_name, harmonised_link)
@@ -124,7 +125,7 @@ harmonise_gamlss_feature <- function(model_file, data, output_dir,
   out_timing <- file.path(output_dir, paste0(feature_name, "_timing.csv"))
 
   tryCatch({
-    logger::log_info("Harmonising: ", feature_name)
+    logger::log_info(paste0("Harmonising: ", feature_name))
 
     sc            <- load_scaling(model_file, feature_name, log_transform)
     y_mean        <- sc$y_mean
@@ -136,7 +137,8 @@ harmonise_gamlss_feature <- function(model_file, data, output_dir,
     n_params    <- get_n_params(family_name)
     dist_funcs  <- get_distribution_functions(family_name)
 
-    logger::log_info("  Family: ", family_name, " | log_transform: ", log_transform)
+    logger::log_info(paste0("  Family: ", family_name,
+                            " | log_transform: ", log_transform))
 
     required_cols <- c(feature_name, "age", "sex", id_var, batch_var)
     missing_cols  <- setdiff(required_cols, names(data))
@@ -182,7 +184,7 @@ harmonise_gamlss_feature <- function(model_file, data, output_dir,
     cdf_valid  <- cdf_values >= 0 & cdf_values <= 1
     n_invalid  <- sum(!cdf_valid)
     if (n_invalid > 0)
-      logger::log_info("  ", n_invalid, " CDF values outside [0,1] -> NA")
+      logger::log_info(paste0("  ", n_invalid, " CDF values outside [0,1] -> NA"))
 
     params_harmonised <- lapply(setNames(param_names, param_names), function(p)
       compute_harmonised_param(model, model_data, p, batch_var))
@@ -195,17 +197,17 @@ harmonise_gamlss_feature <- function(model_file, data, output_dir,
     harmonised_orig <- if (log_transform) exp(harmonised_raw) - 1 else harmonised_raw
 
     out_df <- data.frame(
-      id                    = model_data[[id_var]],
-      batch                 = model_data[[batch_var]],
-      age                   = model_data$age,
-      sex                   = model_data$sex,
-      original_value        = original_y,
-      harmonised_value      = harmonised_orig,
-      harmonisation_effect  = harmonised_orig - original_y,
-      cdf_value             = cdf_values,
-      cdf_valid             = cdf_valid,
-      distribution_family   = family_name,
-      log_transform         = log_transform
+      id                   = model_data[[id_var]],
+      batch                = model_data[[batch_var]],
+      age                  = model_data$age,
+      sex                  = model_data$sex,
+      original_value       = original_y,
+      harmonised_value     = harmonised_orig,
+      harmonisation_effect = harmonised_orig - original_y,
+      cdf_value            = cdf_values,
+      cdf_valid            = cdf_valid,
+      distribution_family  = family_name,
+      log_transform        = log_transform
     )
 
     if (has_wave) out_df$wave <- model_data$wave
@@ -225,26 +227,30 @@ harmonise_gamlss_feature <- function(model_file, data, output_dir,
     write.csv(out_df, out_csv, row.names = FALSE)
 
     elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
-    logger::log_info("  Done in ", format_time(elapsed))
+    logger::log_info(paste0("  Done in ", format_time(elapsed)))
 
-    write.csv(data.frame(feature = feature_name, status = "success",
-                         distribution  = family_name,
-                         start_time    = as.character(start_time),
-                         end_time      = as.character(Sys.time()),
-                         time_secs     = elapsed,
+    write.csv(data.frame(feature        = feature_name,
+                         status         = "success",
+                         distribution   = family_name,
+                         start_time     = as.character(start_time),
+                         end_time       = as.character(Sys.time()),
+                         time_secs      = elapsed,
                          n_observations = nrow(out_df),
-                         n_invalid_cdf = n_invalid,
-                         log_transform = log_transform),
+                         n_invalid_cdf  = n_invalid,
+                         log_transform  = log_transform),
               out_timing, row.names = FALSE)
 
     list(status = "success", feature = feature_name, distribution = family_name,
-         processing_time = elapsed, n_observations = nrow(out_df), output_file = out_csv)
+         processing_time = elapsed, n_observations = nrow(out_df),
+         output_file = out_csv)
 
   }, error = function(e) {
     elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
-    logger::log_error("Error harmonising ", feature_name, ": ", e$message)
-    write.csv(data.frame(feature = feature_name, status = "error",
-                         error_message = e$message, time_secs = elapsed),
+    logger::log_error(paste0("Error harmonising ", feature_name, ": ", e$message))
+    write.csv(data.frame(feature       = feature_name,
+                         status        = "error",
+                         error_message = e$message,
+                         time_secs     = elapsed),
               out_timing, row.names = FALSE)
     list(status = "error", feature = feature_name,
          error = e$message, processing_time = elapsed)
@@ -271,7 +277,7 @@ harmonise_all_gamlss_models <- function(model_base_dir, data,
     model_files <- model_files[grepl(pattern, model_files)]
   }
 
-  logger::log_info("Harmonising ", length(model_files), " features")
+  logger::log_info(paste0("Harmonising ", length(model_files), " features"))
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
   process_one <- function(mf) {
@@ -304,12 +310,12 @@ harmonise_all_gamlss_models <- function(model_base_dir, data,
   } else {
     results <- vector("list", length(model_files))
     for (i in seq_along(model_files)) {
-      logger::log_info("Feature ", i, "/", length(model_files))
+      logger::log_info(paste0("Feature ", i, "/", length(model_files)))
       results[[i]] <- process_one(model_files[i])
       elapsed <- as.numeric(difftime(Sys.time(), overall_start, units = "secs"))
-      logger::log_info("  ", round(100 * i / length(model_files), 1),
-                       "% | est. remaining: ",
-                       format_time(elapsed / i * (length(model_files) - i)))
+      logger::log_info(paste0("  ", round(100 * i / length(model_files), 1),
+                              "% | est. remaining: ",
+                              format_time(elapsed / i * (length(model_files) - i))))
     }
   }
 
@@ -329,14 +335,17 @@ harmonise_all_gamlss_models <- function(model_base_dir, data,
   write.csv(summary_df,
             file.path(output_dir, "harmonisation_summary.csv"), row.names = FALSE)
 
-  invisible(list(results = results, successes = successes, failures = failures,
-                 total_time = format_time(elapsed), output_dir = output_dir))
+  invisible(list(results    = results,
+                 successes  = successes,
+                 failures   = failures,
+                 total_time = format_time(elapsed),
+                 output_dir = output_dir))
 }
 
 combine_harmonised_results <- function(harmonised_output_dir,
                                        id_var                    = "id",
                                        generate_normative_scores = TRUE) {
-  logger::log_info("Combining harmonised results (wide format)")
+  logger::log_info(paste0("Combining harmonised results (wide format)"))
 
   files <- list.files(harmonised_output_dir, pattern = "_harmonised\\.csv$",
                       recursive = TRUE, full.names = TRUE)
@@ -380,14 +389,16 @@ combine_harmonised_results <- function(harmonised_output_dir,
 
   harm_path <- file.path(harmonised_output_dir, "combined_harmonised.csv")
   write.csv(wide_harm, harm_path, row.names = FALSE)
-  logger::log_info("Saved: ", harm_path,
-                   " (", nrow(wide_harm), " rows, ", length(files), " features)")
+  logger::log_info(paste0("Saved: ", harm_path,
+                          " (", nrow(wide_harm), " rows, ",
+                          length(files), " features)"))
 
   if (generate_normative_scores) {
     norm_path <- file.path(harmonised_output_dir, "combined_normative.csv")
     write.csv(wide_norm, norm_path, row.names = FALSE)
-    logger::log_info("Saved: ", norm_path,
-                     " (", nrow(wide_norm), " rows, ", length(files), " features)")
+    logger::log_info(paste0("Saved: ", norm_path,
+                            " (", nrow(wide_norm), " rows, ",
+                            length(files), " features)"))
   }
 
   invisible(list(harmonised = wide_harm,

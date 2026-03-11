@@ -80,13 +80,13 @@ log_dir <- cfg$output$logs %||% file.path(output_dir, "logs")
 setup_logging(log_dir, "fit")
 
 log_info("=== gamlssHarmo fit ===")
-log_info("config:        ", cfg_path)
-log_info("data:          ", raw_csv %||% "(not set)")
-log_info("batch_var:     ", batch_var)
-log_info("longitudinal:  ", longitudinal)
-log_info("log_transform: ", log_transform)
-log_info("family_order:  ", paste(family_order, collapse = " -> "))
-log_info("n_cores:       ", n_cores)
+log_info(paste0("config:        ", cfg_path))
+log_info(paste0("data:          ", raw_csv %||% "(not set)"))
+log_info(paste0("batch_var:     ", batch_var))
+log_info(paste0("longitudinal:  ", longitudinal))
+log_info(paste0("log_transform: ", log_transform))
+log_info(paste0("family_order:  ", paste(family_order, collapse = " -> ")))
+log_info(paste0("n_cores:       ", n_cores))
 
 if (is.null(raw_csv) || !nzchar(raw_csv))
   stop("Provide --data or set data.raw_csv in params.yml")
@@ -94,7 +94,7 @@ if (!file.exists(raw_csv))
   stop("Data file not found: ", raw_csv)
 
 data <- read.csv(raw_csv, stringsAsFactors = FALSE)
-log_info("Loaded: ", nrow(data), " rows x ", ncol(data), " cols")
+log_info(paste0("Loaded: ", nrow(data), " rows x ", ncol(data), " cols"))
 
 meta_cols <- get_meta_cols(batch_var, id_var, data)
 features  <- resolve_features(
@@ -103,7 +103,7 @@ features  <- resolve_features(
   data          = data,
   meta_cols     = meta_cols
 )
-log_info("Features: ", length(features))
+log_info(paste0("Features: ", length(features)))
 
 formula_terms <- parse_and_validate_formulas(cfg, data, longitudinal)
 log_info("Formulas validated")
@@ -121,6 +121,7 @@ results <- run_gamlss_harmonisation(
   n_cores       = n_cores
 )
 
-log_info("=== fit complete === success: ", results$successes,
-         " | skipped: ", results$skipped, " | failed: ", results$failures)
-log_info("time: ", results$total_time)
+log_info(paste0("=== fit complete === success: ", results$successes,
+                " | skipped: ", results$skipped,
+                " | failed: ", results$failures))
+log_info(paste0("time: ", results$total_time))

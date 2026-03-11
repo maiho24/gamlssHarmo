@@ -22,9 +22,9 @@ build_family_specs <- function(family_name, nu_f, tau_f) {
   if (family_name %in% four_param) {
     return(list(
       list(name = paste0(family_name, "_full"),
-           nu.formula = nu_f,     tau.formula = tau_f),
+           nu.formula = nu_f,      tau.formula = tau_f),
       list(name = paste0(family_name, "_nu_only"),
-           nu.formula = nu_f,     tau.formula = intercept),
+           nu.formula = nu_f,      tau.formula = intercept),
       list(name = paste0(family_name, "_tau_only"),
            nu.formula = intercept, tau.formula = tau_f),
       list(name = paste0(family_name, "_intercept"),
@@ -34,7 +34,7 @@ build_family_specs <- function(family_name, nu_f, tau_f) {
   if (family_name %in% three_param) {
     return(list(
       list(name = paste0(family_name, "_nu"),
-           nu.formula = nu_f,     tau.formula = NULL),
+           nu.formula = nu_f,      tau.formula = NULL),
       list(name = paste0(family_name, "_intercept"),
            nu.formula = intercept, tau.formula = NULL)
     ))
@@ -69,16 +69,16 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
   )
 
   tryCatch({
-    logger::log_info("Processing: ", feature_name)
+    logger::log_info(paste0("Processing: ", feature_name))
 
     required_cols <- c(feature_name, "age", "sex", id_var, batch_var)
     missing_cols  <- setdiff(required_cols, names(data))
     if (length(missing_cols) > 0)
       stop("Missing columns: ", paste(missing_cols, collapse = ", "))
 
-    has_wave   <- "wave" %in% names(data)
-    keep_cols  <- unique(c(feature_name, "age", "sex", batch_var, id_var,
-                           if (has_wave) "wave"))
+    has_wave  <- "wave" %in% names(data)
+    keep_cols <- unique(c(feature_name, "age", "sex", batch_var, id_var,
+                          if (has_wave) "wave"))
 
     model_data <- data[, keep_cols, drop = FALSE]
     model_data <- model_data[
@@ -90,14 +90,14 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
 
     n_obs     <- nrow(model_data)
     n_removed <- nrow(data) - n_obs
-    logger::log_info("  n = ", n_obs, " (", n_removed, " removed)")
+    logger::log_info(paste0("  n = ", n_obs, " (", n_removed, " removed)"))
 
     if (n_obs < 100)
       stop("Insufficient data (", n_obs, " < 100)")
 
     n_batches <- length(unique(model_data[[batch_var]]))
     if (n_batches < 2) {
-      logger::log_info("  Skipping -- only 1 batch level")
+      logger::log_info(paste0("  Skipping -- only 1 batch level"))
       elapsed <- as.numeric(difftime(Sys.time(), feature_start, units = "secs"))
       write.csv(data.frame(feature = feature_name, reason = "single batch",
                            timestamp = as.character(Sys.time())),
@@ -121,8 +121,8 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
     nu_f    <- terms_to_formula(formula_terms$nu,    batch_var, id_var)
     tau_f   <- terms_to_formula(formula_terms$tau,   batch_var, id_var)
 
-    logger::log_info("  mu:    ", deparse(mu_f))
-    logger::log_info("  sigma: ", deparse(sigma_f))
+    logger::log_info(paste0("  mu:    ", deparse(mu_f)))
+    logger::log_info(paste0("  sigma: ", deparse(sigma_f)))
 
     fit_start  <- Sys.time()
     model      <- NULL
@@ -131,7 +131,7 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
     for (fam_name in family_order) {
       fam_fn <- get_family_fn(fam_name)
       for (spec in build_family_specs(fam_name, nu_f, tau_f)) {
-        logger::log_info("  Trying: ", spec$name)
+        logger::log_info(paste0("  Trying: ", spec$name))
         model <- try_gamlss(mu.formula    = mu_f,
                             sigma.formula = sigma_f,
                             nu.formula    = spec$nu.formula,
@@ -139,8 +139,8 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
                             data          = model_data,
                             family        = fam_fn())
         if (!is.null(model)) {
-          logger::log_info("  Converged: ", spec$name,
-                           " | AIC: ", round(AIC(model), 2))
+          logger::log_info(paste0("  Converged: ", spec$name,
+                                  " | AIC: ", round(AIC(model), 2)))
           final_spec <- spec$name
           break
         }
@@ -155,28 +155,36 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
     model$call$data <- model_data
 
     saveRDS(model, paths$model)
-    capture.output(summary(model), file = paths$summary)
+    tryCatch(
+      capture.output(summary(model), file = paths$summary),
+      error   = function(e) logger::log_info(paste0("  Summary skipped: ", e$message)),
+      warning = function(w) logger::log_info(paste0("  Summary warning: ", w$message))
+    )
 
     mu_pred    <- predict(model, what = "mu",    type = "response", newdata = model_data)
     sigma_pred <- predict(model, what = "sigma", type = "response", newdata = model_data)
-    nu_pred    <- tryCatch(predict(model, what = "nu",  type = "response", newdata = model_data),
-                           error = function(e) rep(NA_real_, nrow(model_data)))
-    tau_pred   <- tryCatch(predict(model, what = "tau", type = "response", newdata = model_data),
-                           error = function(e) rep(NA_real_, nrow(model_data)))
+    nu_pred    <- tryCatch(
+      predict(model, what = "nu",  type = "response", newdata = model_data),
+      error = function(e) rep(NA_real_, nrow(model_data))
+    )
+    tau_pred   <- tryCatch(
+      predict(model, what = "tau", type = "response", newdata = model_data),
+      error = function(e) rep(NA_real_, nrow(model_data))
+    )
 
     mu_original <- mu_pred * y_sd + y_mean
     if (log_transform) mu_original <- exp(mu_original) - 1
 
     pred_df <- data.frame(
-      id    = model_data[[id_var]],
-      batch = model_data[[batch_var]],
-      age   = model_data$age,
-      sex   = model_data$sex,
+      id             = model_data[[id_var]],
+      batch          = model_data[[batch_var]],
+      age            = model_data$age,
+      sex            = model_data$sex,
       observed_value = model_data$y,
-      mu    = mu_original,
-      sigma = sigma_pred * y_sd,
-      nu    = nu_pred,
-      tau   = tau_pred,
+      mu             = mu_original,
+      sigma          = sigma_pred * y_sd,
+      nu             = nu_pred,
+      tau            = tau_pred,
       scaling_mean   = y_mean,
       scaling_sd     = y_sd,
       log_transform  = log_transform
@@ -186,47 +194,48 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
 
     resid_vals <- residuals(model)
     write.csv(data.frame(
-      feature        = feature_name,
-      n_observations = n_obs,
-      n_batches      = n_batches,
-      distribution   = final_spec,
-      AIC            = AIC(model),
-      BIC            = BIC(model),
-      MSE            = mean(resid_vals^2),
+      feature           = feature_name,
+      n_observations    = n_obs,
+      n_batches         = n_batches,
+      distribution      = final_spec,
+      AIC               = AIC(model),
+      BIC               = BIC(model),
+      MSE               = mean(resid_vals^2),
       fitting_time_secs = fit_time,
-      converged      = TRUE,
+      converged         = TRUE,
       longitudinal_mode = longitudinal,
-      log_transform  = log_transform
+      log_transform     = log_transform
     ), paths$metrics, row.names = FALSE)
 
     tryCatch({
       grDevices::pdf(paths$diagnostics, width = 12, height = 8)
       plot(model)
       grDevices::dev.off()
-    }, error = function(e) logger::log_info("  Diagnostics skipped: ", e$message))
+    }, error = function(e) logger::log_info(paste0("  Diagnostics skipped: ", e$message)))
 
     feature_time <- as.numeric(difftime(Sys.time(), feature_start, units = "secs"))
-    logger::log_info("  Done in ", format_time(feature_time))
+    logger::log_info(paste0("  Done in ", format_time(feature_time)))
 
     write.csv(data.frame(
-      feature        = feature_name,
-      status         = "success",
-      distribution   = final_spec,
-      start_time     = as.character(feature_start),
-      end_time       = as.character(Sys.time()),
-      total_time_secs = feature_time,
-      fit_time_secs  = fit_time,
+      feature           = feature_name,
+      status            = "success",
+      distribution      = final_spec,
+      start_time        = as.character(feature_start),
+      end_time          = as.character(Sys.time()),
+      total_time_secs   = feature_time,
+      fit_time_secs     = fit_time,
       longitudinal_mode = longitudinal,
-      log_transform  = log_transform
+      log_transform     = log_transform
     ), paths$timing, row.names = FALSE)
 
     list(status = "success", feature = feature_name, distribution = final_spec,
          processing_time = feature_time, n_observations = n_obs, n_batches = n_batches)
 
   }, error = function(e) {
-    logger::log_error("Error in ", feature_name, ": ", e$message)
+    logger::log_error(paste0("Error in ", feature_name, ": ", e$message))
     feature_time <- as.numeric(difftime(Sys.time(), feature_start, units = "secs"))
-    write.csv(data.frame(feature = feature_name, status = "error",
+    write.csv(data.frame(feature       = feature_name,
+                         status        = "error",
                          error_message = e$message,
                          start_time    = as.character(feature_start),
                          end_time      = as.character(Sys.time()),
@@ -245,7 +254,7 @@ run_gamlss_harmonisation <- function(data, features, output_dir, formula_terms,
                                      family_order  = c("SHASH", "GG", "NO"),
                                      n_cores       = 1) {
   overall_start <- Sys.time()
-  logger::log_info("Fitting ", length(features), " features")
+  logger::log_info(paste0("Fitting ", length(features), " features"))
 
   model_dir <- file.path(output_dir, "models")
   dir.create(model_dir, recursive = TRUE, showWarnings = FALSE)
@@ -280,7 +289,7 @@ run_gamlss_harmonisation <- function(data, features, output_dir, formula_terms,
     results <- vector("list", length(features))
     timings <- data.frame()
     for (i in seq_along(features)) {
-      logger::log_info("Feature ", i, "/", length(features), ": ", features[i])
+      logger::log_info(paste0("Feature ", i, "/", length(features), ": ", features[i]))
       results[[i]] <- fit_one(features[i])
       timings <- rbind(timings, data.frame(
         feature      = features[i],
@@ -291,9 +300,9 @@ run_gamlss_harmonisation <- function(data, features, output_dir, formula_terms,
       ))
       write.csv(timings, file.path(output_dir, "feature_timings.csv"), row.names = FALSE)
       elapsed <- as.numeric(difftime(Sys.time(), overall_start, units = "secs"))
-      logger::log_info("  ", round(100 * i / length(features), 1),
-                       "% | est. remaining: ",
-                       format_time(elapsed / i * (length(features) - i)))
+      logger::log_info(paste0("  ", round(100 * i / length(features), 1),
+                              "% | est. remaining: ",
+                              format_time(elapsed / i * (length(features) - i))))
     }
   }
 
@@ -314,7 +323,10 @@ run_gamlss_harmonisation <- function(data, features, output_dir, formula_terms,
   )
   write.csv(summary_df, file.path(output_dir, "model_summary.csv"), row.names = FALSE)
 
-  invisible(list(results = results, successes = successes, skipped = skipped,
-                 failures = failures, total_time = format_time(total_t),
+  invisible(list(results    = results,
+                 successes  = successes,
+                 skipped    = skipped,
+                 failures   = failures,
+                 total_time = format_time(total_t),
                  output_dir = output_dir))
 }

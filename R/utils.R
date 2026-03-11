@@ -109,7 +109,6 @@ parse_and_validate_formulas <- function(config, data, longitudinal) {
   result
 }
 
-# Build the minimal set of metadata columns given the current config.
 # wave is included only if it exists in the data.
 get_meta_cols <- function(batch_var, id_var, data = NULL) {
   base <- c(id_var, "age", "sex", batch_var)
@@ -123,6 +122,7 @@ setup_logging <- function(log_dir, stage_name) {
   log_file <- file.path(log_dir,
                         paste0(stage_name, "_",
                                format(Sys.time(), "%Y%m%d_%H%M%S"), ".log"))
+  logger::log_formatter(logger::formatter_paste)
   logger::log_appender(logger::appender_tee(log_file))
   invisible(log_file)
 }

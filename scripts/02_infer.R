@@ -78,12 +78,12 @@ log_dir <- cfg$output$logs %||% file.path(dirname(output_dir), "logs")
 setup_logging(log_dir, "infer")
 
 log_info("=== gamlssHarmo infer ===")
-log_info("config:          ", cfg_path)
-log_info("data:            ", raw_csv %||% "(not set)")
-log_info("models:          ", models_dir)
-log_info("batch_var:       ", batch_var)
-log_info("normative:       ", normative_scores)
-log_info("n_cores:         ", n_cores)
+log_info(paste0("config:          ", cfg_path))
+log_info(paste0("data:            ", raw_csv %||% "(not set)"))
+log_info(paste0("models:          ", models_dir))
+log_info(paste0("batch_var:       ", batch_var))
+log_info(paste0("normative:       ", normative_scores))
+log_info(paste0("n_cores:         ", n_cores))
 
 if (is.null(raw_csv) || !nzchar(raw_csv))
   stop("Provide --data or set data.raw_csv in params.yml")
@@ -93,7 +93,7 @@ if (!dir.exists(models_dir))
   stop("Models directory not found: ", models_dir, "\nRun 'gamlssHarmo fit' first.")
 
 data <- read.csv(raw_csv, stringsAsFactors = FALSE)
-log_info("Loaded: ", nrow(data), " rows x ", ncol(data), " cols")
+log_info(paste0("Loaded: ", nrow(data), " rows x ", ncol(data), " cols"))
 
 feature_subset <- if (!is.null(feature_single) && nzchar(feature_single)) {
   feature_single
@@ -121,6 +121,7 @@ combine_harmonised_results(
   generate_normative_scores = normative_scores
 )
 
-log_info("=== infer complete === success: ", results$successes,
-         " | failed: ", results$failures)
-log_info("combined CSV: ", file.path(output_dir, "combined_harmonised.csv"))
+log_info(paste0("=== infer complete === success: ", results$successes,
+                " | failed: ", results$failures))
+log_info(paste0("combined CSV: ",
+                file.path(output_dir, "combined_harmonised.csv")))
