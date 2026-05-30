@@ -1,0 +1,3 @@
+# One feature name per line. Lines starting with '#' are ignored.
+# Leave empty to use all non-metadata columns in the data.
+smri_vol_scs_wholeb

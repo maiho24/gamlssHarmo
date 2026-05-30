@@ -1,0 +1,18 @@
+# ----- Data & outputs -----
+data/raw/
+data/harmonised/
+output/
+
+# ----- R -----
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# ----- Jupyter -----
+**/.ipynb_checkpoints/
+
+# ----- OS -----
+.DS_Store
+Thumbs.db
+CLAUDE.md

@@ -1,0 +1,110 @@
+# gamlssHarmo configuration
+# All options can be overridden via CLI arguments.
+# Run: gamlssHarmo <stage> --help
+
+data:
+  raw_csv:        ""
+  harmonised_csv: ""                        # path to combined_harmonised.csv for plot --post
+
+output:
+  base: "output"
+
+# Feature selection (applied to diagnose, fit, infer, and plot stages).
+# features_txt:          path to a .txt file with one feature name per line.
+# feature:               single feature override -- takes priority.
+# feature_families_csv:  path to a per-feature recommendations CSV (see below).
+#                        Used by both fit and diagnose stages.
+# If all are empty, all non-metadata columns in the data CSV are used.
+features:
+  features_txt:         "config/features.txt"
+  feature:              ""
+  feature_families_csv: ""   # e.g. output/diagnostics/feature_recommendations.csv
+
+model:
+  batch_var:     "batch"    # column identifying the batch/site/scanner effect
+  id_var:        "id"       # subject ID column; use {id} placeholder in formulas
+  age_var:       "age"      # column containing subject age (renamed to 'age' internally)
+  sex_var:       "sex"      # column containing sex covariate (renamed to 'sex' internally)
+  longitudinal:  false      # if true, formulas_longitudinal is used
+  log_transform: false      # apply log(y+1) before fitting
+  discrete:      false      # if true, treats all features as count data
+
+  # Global family order -- tried in sequence, first convergence wins.
+  # Overridden per-feature when --feature-families is supplied.
+  # Continuous families: SHASH, JSU, GG, NO, TF, LOGNO, BCT, BCPE, BCCG,
+  #                      SN1, PE2, ST3, ST4, EGB2, exGAUS
+  # Discrete families:   PO, NBI, NBII, ZIP, ZINBI, ZANBI, PIG, ZIPIG,
+  #                      SICHEL, ZISICHEL, ZASICHEL, DPO
+  family_order:
+    - "SHASH"
+    - "GG"
+    - "NO"
+
+  # Discrete-mode family order (used when discrete: true).
+  # family_order_discrete:
+  #   - "ZINBI"
+  #   - "NBI"
+  #   - "PO"
+
+  # Global formula terms -- applied to all features unless overridden.
+  # Per-feature nu/tau terms can be overridden via --feature-families CSV.
+  # mu and sigma are always taken from the global config.
+  formulas:
+    mu:    ["pb(age)", "sex", "random({batch})"]
+    sigma: ["pb(age)", "sex", "random({batch})"]
+    nu:    ["random({batch})"]
+    tau:   ["random({batch})"]
+
+  formulas_longitudinal:
+    mu:    ["pb(age)", "sex", "random({batch})", "random({id})"]
+    sigma: ["pb(age)", "sex", "random({batch})"]
+    nu:    ["random({batch})"]
+    tau:   ["random({batch})"]
+
+compute:
+  n_cores: 1
+
+# ---------------------------------------------------------------------------
+# Diagnostics stage (00_diagnose.R) settings.
+# All values can be overridden via CLI flags to gamlssHarmo diagnose.
+# ---------------------------------------------------------------------------
+diagnostics:
+
+  # Number of permutations for between-batch higher-moment tests.
+  # 499 gives stable p-values at thresh_pval = 0.01.
+  # Increase to 999 if you need to detect effects at thresh_pval = 0.001.
+  n_perm: 499
+
+  # Minimum observations per batch to include in permutation tests.
+  # Batches below this threshold are excluded from the test entirely.
+  # Reduce only if your cohorts are uniformly small (e.g. rare-disease
+  # studies with n < 50 per site).
+  min_batch_n: 50
+
+  # Tier 1 (near-Gaussian) thresholds.
+  # A feature is Tier 1 when BOTH |skewness| < thresh_skew AND
+  # |excess kurtosis| < thresh_kurt. Tier 1 features get simpler formulas
+  # (sigma ~ random(batch) only). Increase these to classify more features
+  # as near-Gaussian; decrease to be more conservative.
+  thresh_skew: 0.5
+  thresh_kurt: 1.0
+
+  # Batch higher-moment effect thresholds.
+  # An effect is declared only when BOTH p < thresh_pval AND the
+  # between-batch range >= thresh_*_range. The dual criterion prevents
+  # spurious flags in large samples where trivial differences are significant.
+  # Raise thresh_*_range to require a larger practical effect before
+  # recommending batch terms in nu/tau.
+  thresh_pval:       0.01
+  thresh_skew_range: 0.3
+  thresh_kurt_range: 0.5
+
+  # Discrete-mode batch effect thresholds (same dual-criterion logic).
+  thresh_zerorate_range:   0.10  # min between-batch zero-rate range for Tier 3
+  thresh_dispersion_range: 0.50  # min between-batch dispersion-ratio range
+
+plot:
+  group_col:     "batch"
+  smooth_method: "loess"
+  age_bin_width: 5
+  fix_y_limits:  true
