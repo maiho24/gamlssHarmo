@@ -17,12 +17,21 @@ cd gamlssHarmo
 
 ### 2. Install dependencies and register the command
 
-**Conda** (recommended)
+**Option A — Conda (recommended)**
 ```bash
 conda env create -f environment.yml
 conda activate gamlssHarmo
 Rscript install_dependencies.R
 ```
+The conda environment installs all R packages. `install_dependencies.R` then registers the `gamlssHarmo` CLI command inside the active environment.
+
+**Option B — Plain R (R already installed)**
+```bash
+Rscript install_dependencies.R
+```
+Installs any missing R packages from CRAN and registers the `gamlssHarmo` command:
+- Linux/macOS: symlink placed in `~/.local/bin/`
+- Windows: `gamlssHarmo.cmd` created in the repo root (add the repo root to `PATH` to use `gamlssHarmo` from any directory)
 
 See the [Dependencies](#dependencies) section for the full package list.
 
@@ -313,9 +322,6 @@ gamlssHarmo infer --data data/raw/my_data.csv --batch_var site
 
 ### Namespace outputs with --suffix (useful for comparing runs)
 ```bash
-# --suffix must be identical across fit, infer, and plot for the same run.
-# If fit uses --suffix _shash but infer omits it, infer looks for models/
-# instead of models_shash/ and fails with "Models directory not found".
 gamlssHarmo fit   --data data/raw/my_data.csv --suffix _shash --family_order SHASH
 gamlssHarmo infer --data data/raw/my_data.csv --suffix _shash
 gamlssHarmo plot  --post output/harmonised_shash/combined_harmonised.csv --suffix _shash
