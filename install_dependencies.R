@@ -51,6 +51,12 @@ register_cli <- function() {
       unlink(dst)
       file.symlink(launcher, dst)
       Sys.chmod(launcher, "0755")
+      if (file.access(launcher, 1) != 0) {
+        ret <- system(paste("chmod +x", shQuote(launcher)))
+        if (ret != 0 || file.access(launcher, 1) != 0)
+          warning("Could not set execute permission on ", launcher,
+                  "\nRun manually: chmod +x ", launcher)
+      }
     }
     message("gamlssHarmo registered at: ", dst)
     return(invisible(dst))
@@ -64,6 +70,12 @@ register_cli <- function() {
     unlink(dst)
     file.symlink(launcher, dst)
     Sys.chmod(launcher, "0755")
+    if (file.access(launcher, 1) != 0) {
+      ret <- system(paste("chmod +x", shQuote(launcher)))
+      if (ret != 0 || file.access(launcher, 1) != 0)
+        warning("Could not set execute permission on ", launcher,
+                "\nRun manually: chmod +x ", launcher)
+    }
     message("gamlssHarmo registered at: ", dst)
     in_path <- any(grepl(local_bin, strsplit(Sys.getenv("PATH"), ":")[[1]],
                          fixed = TRUE))
