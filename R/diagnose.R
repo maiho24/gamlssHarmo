@@ -3,7 +3,8 @@
 # Pre-fitting diagnostic functions for gamlssHarmo.
 #
 # CONTINUOUS mode (discrete = FALSE, default):
-#   1. Residualise for age (quadratic) and sex via OLS
+#   1. Residualise for age (quadratic), sex, and batch (fixed effects) via OLS
+#      so the moments reflect the within-batch conditional shape
 #   2. Compute skewness and excess kurtosis on residuals
 #   3. Permutation tests for between-batch variance in skewness and kurtosis
 #   4. Tier assignment and Cullen-Frey family recommendation
@@ -105,7 +106,7 @@ permutation_test_batch_moment <- function(x, batches, moment_fn,
   })
   perm_vars <- perm_vars[is.finite(perm_vars)]
   p_val     <- if (length(perm_vars) > 0L)
-    mean(perm_vars >= obs_var) else NA_real_
+    (1 + sum(perm_vars >= obs_var)) / (1 + length(perm_vars)) else NA_real_
 
   list(observed_variance = obs_var,
        p_value           = p_val,
@@ -118,21 +119,27 @@ permutation_test_batch_moment <- function(x, batches, moment_fn,
 # Residualise a continuous feature for age (quadratic) and sex.
 # ---------------------------------------------------------------------------
 
-residualise_feature <- function(data, feature_name) {
+residualise_feature <- function(data, feature_name, batch_var = NULL) {
   df <- data.frame(
     y   = data[[feature_name]],
     age = data[["age"]],
     sex = data[["sex"]]
   )
+  has_batch <- !is.null(batch_var) && batch_var %in% names(data)
+  if (has_batch) df$batch <- as.factor(data[[batch_var]])
+
   df <- df[is.finite(df$y) & is.finite(df$age) & !is.na(df$sex), ]
   if (nrow(df) < 10L) {
     warning("Too few observations to residualise '", feature_name, "'")
     return(df$y - mean(df$y, na.rm = TRUE))
   }
-  fit <- tryCatch(
-    lm(y ~ poly(age, 2L) + sex, data = df),
-    error = function(e) NULL
-  )
+
+  use_batch <- has_batch && !anyNA(df$batch) &&
+               nlevels(droplevels(df$batch)) > 1L
+  form <- if (use_batch) y ~ poly(age, 2L) + sex + batch
+          else           y ~ poly(age, 2L) + sex
+
+  fit <- tryCatch(lm(form, data = df), error = function(e) NULL)
   if (is.null(fit)) return(df$y - mean(df$y))
   residuals(fit)
 }
@@ -196,8 +203,8 @@ test_overdispersion <- function(x, age, sex) {
   )
   mu_hat <- if (!is.null(pois_fit)) fitted(pois_fit) else rep(ybar, n)
 
-  z       <- (df$y - mu_hat)^2 - df$y
-  aux_fit <- tryCatch(lm(z ~ mu_hat - 1L), error = function(e) NULL)
+  z       <- ((df$y - mu_hat)^2 - df$y) / mu_hat
+  aux_fit <- tryCatch(lm(z ~ mu_hat - 1), error = function(e) NULL)
 
   if (is.null(aux_fit))
     return(list(statistic = NA_real_, p_value = NA_real_,
@@ -764,7 +771,7 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
     # CONTINUOUS PATH
     # =========================================================================
 
-    resid <- residualise_feature(df, feature_name)
+    resid <- residualise_feature(df, feature_name, batch_var)
     skew  <- compute_skewness(resid)
     kurt  <- compute_excess_kurtosis(resid)
 

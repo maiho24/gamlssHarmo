@@ -72,8 +72,9 @@ Used for imaging-derived measures, cognitive scores, and any real-valued feature
 
 **Steps internally:**
 1. Rows with missing feature, age, or sex values are removed.
-2. The feature is residualised for age (quadratic: `lm(y ~ poly(age, 2) + sex)`)
-   to remove the covariate effect before distributional assessment.
+2. The feature is residualised for age (quadratic), sex, and batch as fixed
+   effects (`lm(y ~ poly(age, 2) + sex + batch)`) so the moments reflect the
+   within-batch conditional shape rather than between-batch mixing.
 3. Skewness (Type 1, /n) and excess kurtosis are computed on the residuals.
 4. A permutation test checks whether the between-batch variance in skewness
    (and kurtosis) is larger than expected by chance.

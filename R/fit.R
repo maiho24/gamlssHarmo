@@ -47,64 +47,14 @@ formula_has_random <- function(f) {
 }
 
 # ---------------------------------------------------------------------------
-# Build the ordered list of specs for a family.
+# Build a family's fallback ladder, richest spec first.
 #
-# Each spec is a named list:
-#   $name           character  label written to logs and _summary.txt
-#   $sigma.formula  formula    sigma equation for this attempt
-#   $nu.formula     formula    nu equation for this attempt
-#   $tau.formula    formula    tau equation for this attempt
+# Each spec is a named list: $name plus $sigma.formula/$nu.formula/$tau.formula.
+# Later specs reduce nu/tau (and, for discrete, sigma) to intercept; mu is never
+# simplified. Per-family sequences are tabulated in README.md ("Family fallback").
 #
-# For CONTINUOUS families the behaviour is identical to the original.
-#
-# For DISCRETE families the fallback order exhausts nu/tau simplifications
-# before touching sigma, because sigma's random(batch) is second-order
-# and nu carries the clinically important zero-rate batch effect.
-#
-# Naming convention (uniform across all families):
-#   _full        — all extra params (nu, tau) have their full formula
-#   _no_X        — parameter X reduced to intercept, others full
-#   _no_X_no_Y  — both X and Y reduced to intercept
-#   _intercept   — all extra params at intercept (~ 1)
-#
-# Continuous fallback sequences
-# ------------------------------
-#
-# SHASH, JSU, BCT, BCPE (4-param continuous):
-#   1. full         sigma  nu  tau
-#   2. no_tau       sigma  nu  1
-#   3. no_nu        sigma  1   tau
-#   4. intercept    sigma  1   1
-#
-# GG, SN1, TF, PE2, BCCG, exGAUS (3-param continuous):
-#   1. full         sigma  nu
-#   2. intercept    sigma  1
-#
-# Discrete fallback sequences
-# ---------------------------
-#
-# ZISICHEL (4-param discrete):
-#   1. full              sigma  nu  tau
-#   2. no_tau            sigma  nu  1
-#   3. no_nu             sigma  1   tau
-#   4. no_nu_no_tau      sigma  1   1
-#   5. no_sigma          1      nu  tau
-#   6. no_sigma_no_tau   1      nu  1
-#   7. no_sigma_no_nu    1      1   tau
-#   8. intercept         1      1   1
-#
-# ZINBI, ZANBI, ZASICHEL, ZIPIG (3-param ZI/hurdle):
-# SICHEL (3-param shape):
-#   1. full         sigma  nu
-#   2. no_nu        sigma  1
-#   3. no_sigma     1      nu
-#   4. intercept    1      1
-#
-# NBI, NBII, ZIP, PIG, DPO (2-param discrete):
-#   1. full         sigma
-#   2. no_sigma     1
-#
-# PO (1-param): single spec, sigma ignored by gamlss.
+# Naming: _full = all extra params modelled; _no_X = param X at intercept;
+# _intercept = all extra params at intercept.
 # ---------------------------------------------------------------------------
 
 build_family_specs <- function(family_name, nu_f, tau_f,
@@ -543,27 +493,44 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
     final_spec  <- NULL
     eff_sigma_f <- sigma_f
 
+    candidates <- list()
     for (fam_name in eff_families) {
       fam_fn <- get_family_fn(fam_name)
       for (spec in build_family_specs(fam_name, nu_f, tau_f,
                                       sigma_f  = sigma_f,
                                       discrete = eff_discrete)) {
-        logger::log_info(paste0("  Trying: ", spec$name))
-        eff_sigma_f <- spec$sigma.formula %||% sigma_f
-        model <- try_gamlss(mu.formula    = mu_f,
-                            sigma.formula = eff_sigma_f,
-                            nu.formula    = spec$nu.formula,
-                            tau.formula   = spec$tau.formula,
-                            data          = model_data,
-                            family        = fam_fn())
-        if (!is.null(model)) {
-          logger::log_info(paste0("  Converged: ", spec$name,
-                                  " | AIC: ", round(AIC(model), 2)))
-          final_spec <- spec$name
-          break
-        }
+        spec$family_fn <- fam_fn
+        candidates[[length(candidates) + 1L]] <- spec
       }
-      if (!is.null(model)) break
+    }
+
+    # Continuous: order breadth-first by shape richness so the fullest nu/tau
+    # structure is attempted across all families before any is simplified; a
+    # batch effect on nu/tau is thus dropped only when no family supports it.
+    # Discrete keeps its per-family order.
+    if (!eff_discrete) {
+      active     <- function(f) !is.null(f) && length(all.vars(f)) > 0L
+      richness   <- vapply(candidates, function(s)
+                           active(s$nu.formula) + active(s$tau.formula),
+                           numeric(1L))
+      candidates <- candidates[order(-richness, seq_along(richness))]
+    }
+
+    for (spec in candidates) {
+      logger::log_info(paste0("  Trying: ", spec$name))
+      eff_sigma_f <- spec$sigma.formula %||% sigma_f
+      model <- try_gamlss(mu.formula    = mu_f,
+                          sigma.formula = eff_sigma_f,
+                          nu.formula    = spec$nu.formula,
+                          tau.formula   = spec$tau.formula,
+                          data          = model_data,
+                          family        = spec$family_fn())
+      if (!is.null(model)) {
+        logger::log_info(paste0("  Converged: ", spec$name,
+                                " | AIC: ", round(AIC(model), 2)))
+        final_spec <- spec$name
+        break
+      }
     }
 
     if (is.null(model)) {
