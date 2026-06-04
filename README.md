@@ -83,14 +83,6 @@ gamlssHarmo plot --pre  data/raw/my_data.csv \
 You can also invoke each stage directly via `Rscript scripts/0{0-3}_*.R` — both
 forms are equivalent.
 
-For stage-specific help:
-```bash
-gamlssHarmo diagnose --help
-gamlssHarmo fit      --help
-gamlssHarmo infer    --help
-gamlssHarmo plot     --help
-```
-
 ---
 
 ## Options
@@ -109,16 +101,25 @@ gamlssHarmo plot     --help
 
 ---
 
-## Configuration: `config/params.yml`
+## Configuring family & formula selection
 
-All CLI arguments have equivalents in `config/params.yml`. CLI always takes priority
-over the config file.
+For each feature, gamlssHarmo needs to know **which distribution families to try** and
+**what formula to use for each distributional parameter** (`mu`, `sigma`, `nu`, `tau`).
+This can be set at two levels:
 
-### Formula specification
+| Level | Where | Scope | Use when |
+|---|---|---|---|
+| **Global rule** | `config/params.yml` (or CLI flags) | One family order + one formula applied to **every** feature | All features share the same model, or as a fallback |
+| **Per-feature rules** | a `feature_recommendations.csv` passed via `--feature_families` | One row per feature, overriding the global rule for that feature | Features differ in distributional shape (the usual case for multi-feature studies) |
 
-Formulas are specified as term lists per distributional parameter (`mu`, `sigma`,
-`nu`, `tau`). Use `{batch}` and `{id}` as placeholders — substituted at runtime
-with `batch_var` and `id_var`.
+Precedence: CLI flags override `config/params.yml`, and a per-feature CSV row overrides
+both — **column by column**. Any column omitted from the CSV falls back to the global rule.
+
+### Global rule — `config/params.yml`
+
+`family_order` lists the families to try (see [Family fallback](#family-fallback)). The
+`formulas` block sets the term list for each parameter, applied to all features. Use
+`{batch}` and `{id}` as placeholders — substituted at runtime with `batch_var` and `id_var`.
 
 | YAML value                                      | R formula                           | Meaning                         |
 |-------------------------------------------------|-------------------------------------|---------------------------------|
@@ -128,8 +129,44 @@ with `batch_var` and `id_var`.
 | `["pb(age)", "sex", "random({batch})"]`         | `~ pb(age) + sex + random(batch)`   | Full specification              |
 | `["{batch}"]`                                   | `~ batch`                           | Batch as fixed effect           |
 
-Term lists are used exactly as written — no implicit terms are added. `null` always
-means `~ 1`.
+Term lists are used exactly as written — no implicit terms are added. `null` means `~ 1`.
+
+### Per-feature rules — `feature_recommendations.csv`
+
+When features differ in shape, a per-feature table is more convenient than a single global
+rule. The `diagnose` stage generates this file automatically (see
+[`docs/diagnose.md`](docs/diagnose.md)), or you can write it by hand. Pass it to fit with:
+
+```bash
+gamlssHarmo fit --data data/my_data.csv \
+  --feature_families output/diagnostics/feature_recommendations.csv
+```
+
+One row per feature, with these columns:
+
+| Column | Meaning |
+|---|---|
+| `feature` | Feature column name — must match the data CSV exactly |
+| `family_order` | Semicolon-separated families to try, in order |
+| `mu_terms`, `sigma_terms`, `nu_terms`, `tau_terms` | Semicolon-separated formula terms per parameter. Empty cell → intercept-only (`~ 1`); omit the whole column → use the global rule for that parameter |
+| `tier` | Informational diagnose tier (1–4); not read by fit |
+
+**A ready-to-edit template is included in the repository:
+[`examples/feature_recommendations_example.csv`](examples/feature_recommendations_example.csv).**
+Copy it, replace the `feature` values with your own column names, and adjust each row. Its
+contents:
+
+```csv
+feature,family_order,mu_terms,sigma_terms,nu_terms,tau_terms,tier
+smri_thick_cdk_locclh,GG;BCCG;SHASH;NO,pb(age);sex;random({batch}),random({batch}),,,1
+smri_area_cdk_cdacatelh,SHASH;JSU;SN1;NO,pb(age);sex;random({batch}),pb(age);sex;random({batch}),,,2
+smri_area_cdk_fusiformlh,BCT;BCPE;SHASH;GG;BCCG;NO,pb(age);sex;random({batch}),pb(age);sex;random({batch}),random({batch}),random({batch}),3
+```
+
+Reading the rows: the first feature is near-Gaussian (Tier 1 — simplified `sigma`,
+intercept-only `nu`/`tau`); the second adds age/sex to `sigma` (Tier 2); the third has batch
+effects on both skewness and kurtosis (Tier 3 — `nu` and `tau` each get a batch random
+effect). A blank cell means intercept-only for that parameter.
 
 ### Supported families
 
@@ -191,65 +228,78 @@ Spec name glossary: `_full` = all extra params have their full formula; `_no_X` 
 ### Full recommended workflow
 ```bash
 # 1. Diagnose (optional)
-gamlssHarmo diagnose --data data/raw/my_data.csv
+gamlssHarmo diagnose --data data/my_data.csv --output output/
 
 # 2. Fit using diagnose recommendations
-gamlssHarmo fit --data data/raw/my_data.csv \
+gamlssHarmo fit --data data/my_data.csv \
+  --output output/ \
   --feature_families output/diagnostics/feature_recommendations.csv
 
 # 3. Harmonise
-gamlssHarmo infer --data data/raw/my_data.csv
+gamlssHarmo infer --data data/my_data.csv \
+                  --output output/ \
+                  --model output/models
 
 # 4. Plot
-gamlssHarmo plot --pre  data/raw/my_data.csv \
-                   --post output/harmonised/combined_harmonised.csv
+gamlssHarmo plot  --pre  data/my_data.csv \
+                  --post output/harmonised/combined_harmonised.csv \
+                  --output output/
 ```
 
 ### Skip diagnose — specify families directly
+
+One global family order for all features:
 ```bash
-gamlssHarmo fit --data data/raw/my_data.csv --family_order "GG,SHASH,NO"
+gamlssHarmo fit --data data/my_data.csv --family_order "GG,SHASH,NO"
 ```
+
+Or hand-write per-feature rules (copy [`examples/feature_recommendations_example.csv`](examples/feature_recommendations_example.csv) as a template):
+```bash
+gamlssHarmo fit --data data/my_data.csv \
+  --feature_families examples/feature_recommendations_example.csv
+```
+See [Configuring family & formula selection](#configuring-family--formula-selection) for the column reference.
 
 ### Single feature, end-to-end
 ```bash
-Rscript scripts/01_fit.R   --data data/raw/my_data.csv --one_feature ThicknessAvg
-Rscript scripts/02_infer.R --data data/raw/my_data.csv --one_feature ThicknessAvg
-Rscript scripts/03_plot.R  --pre  data/raw/my_data.csv \
-                            --post output/harmonised/combined_harmonised.csv \
-                            --one_feature ThicknessAvg
+gamlssHarmo fit   --data data/my_data.csv --one_feature ThicknessAvg
+gamlssHarmo infer --data data/my_data.csv --one_feature ThicknessAvg
+gamlssHarmo plot  --pre  data/my_data.csv \
+                  --post output/harmonised/combined_harmonised.csv \
+                  --one_feature ThicknessAvg
 ```
 
 ### Discrete / count data
 ```bash
-gamlssHarmo diagnose --data data/raw/my_data.csv --discrete TRUE
-gamlssHarmo fit      --data data/raw/my_data.csv --discrete TRUE \
+gamlssHarmo diagnose --data data/my_data.csv --discrete TRUE
+gamlssHarmo fit      --data data/my_data.csv --discrete TRUE \
   --feature_families output/diagnostics/feature_recommendations.csv
-gamlssHarmo infer    --data data/raw/my_data.csv
+gamlssHarmo infer    --data data/my_data.csv
 ```
 
 ### Custom batch column
 ```bash
-gamlssHarmo fit   --data data/raw/my_data.csv --batch_var site
-gamlssHarmo infer --data data/raw/my_data.csv --batch_var site
+gamlssHarmo fit   --data data/my_data.csv --batch_var site
+gamlssHarmo infer --data data/my_data.csv --batch_var site
 ```
 
 ### Namespace outputs with --suffix (useful for comparing runs)
 ```bash
-gamlssHarmo fit   --data data/raw/my_data.csv --suffix _shash --family_order SHASH
-gamlssHarmo infer --data data/raw/my_data.csv --suffix _shash
+gamlssHarmo fit   --data data/my_data.csv --suffix _shash --family_order SHASH
+gamlssHarmo infer --data data/my_data.csv --suffix _shash
 gamlssHarmo plot  --post output/harmonised_shash/combined_harmonised.csv --suffix _shash
 ```
 
 ### Parallel processing
 ```bash
-gamlssHarmo fit   --data data/raw/my_data.csv --n_cores 8
-gamlssHarmo infer --data data/raw/my_data.csv --n_cores 8
+gamlssHarmo fit   --data data/my_data.csv --n_cores 8
+gamlssHarmo infer --data data/my_data.csv --n_cores 8
 ```
 
 ### Longitudinal data
 ```bash
-gamlssHarmo fit   --data data/raw/my_data.csv --longitudinal TRUE
-gamlssHarmo infer --data data/raw/my_data.csv
+gamlssHarmo fit   --data data/my_data.csv --longitudinal TRUE
+gamlssHarmo infer --data data/my_data.csv
 ```
 
 ### Post-harmonisation trajectories only

@@ -30,7 +30,7 @@ model:
   discrete:      false      # if true, treats all features as count data
 
   # Global family order -- tried in sequence, first convergence wins.
-  # Overridden per-feature when --feature-families is supplied.
+  # Overridden per-feature when --feature_families is supplied.
   # Continuous families: SHASH, JSU, GG, NO, TF, LOGNO, BCT, BCPE, BCCG,
   #                      SN1, PE2, ST3, ST4, EGB2, exGAUS
   # Discrete families:   PO, NBI, NBII, ZIP, ZINBI, ZANBI, PIG, ZIPIG,
@@ -47,8 +47,8 @@ model:
   #   - "PO"
 
   # Global formula terms -- applied to all features unless overridden.
-  # Per-feature nu/tau terms can be overridden via --feature-families CSV.
-  # mu and sigma are always taken from the global config.
+  # Any parameter (mu, sigma, nu, tau) can be overridden per feature via the
+  # --feature_families CSV; columns omitted from that CSV use these values.
   formulas:
     mu:    ["pb(age)", "sex", "random({batch})"]
     sigma: ["pb(age)", "sex", "random({batch})"]

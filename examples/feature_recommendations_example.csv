@@ -1,0 +1,5 @@
+feature,family_order,mu_terms,sigma_terms,nu_terms,tau_terms,tier
+smri_thick_cdk_locclh,GG;BCCG;SHASH;NO,pb(age);sex;random({batch}),random({batch}),,,1
+smri_area_cdk_cdacatelh,SHASH;JSU;SN1;NO,pb(age);sex;random({batch}),pb(age);sex;random({batch}),,,2
+smri_area_cdk_fusiformlh,BCT;BCPE;SHASH;GG;BCCG;NO,pb(age);sex;random({batch}),pb(age);sex;random({batch}),random({batch}),random({batch}),3
+smri_vol_scs_wholeb,SHASH;BCT;BCCG;GG;NO,pb(age);sex;random({batch}),pb(age);sex;random({batch}),random({batch}),,3
