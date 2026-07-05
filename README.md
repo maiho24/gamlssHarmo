@@ -174,7 +174,7 @@ effect). A blank cell means intercept-only for that parameter.
 
 | Params | Families                              |
 |--------|---------------------------------------|
-| 4      | SHASH, JSU, BCT, BCPE                 |
+| 4      | SHASH, JSU, BCT, BCPE, ST3, ST4, EGB2 |
 | 3      | GG, SN1, TF, PE2, BCCG, exGAUS       |
 | 2      | NO, LOGNO                             |
 
@@ -182,8 +182,8 @@ effect). A blank cell means intercept-only for that parameter.
 
 | Params | Families                                          |
 |--------|---------------------------------------------------|
-| 4      | ZISICHEL                                          |
-| 3      | ZINBI, ZANBI, ZIPIG, SICHEL, ZASICHEL             |
+| 4      | ZISICHEL, ZASICHEL                                |
+| 3      | ZINBI, ZANBI, ZIPIG, SICHEL                        |
 | 2      | NBI, NBII, ZIP, PIG, DPO                          |
 | 1      | PO                                                |
 
@@ -209,11 +209,11 @@ for discrete families each ladder is run to exhaustion before the next family.
 
 | Group | Fallback ladder |
 |---|---|
-| 4-param continuous (SHASH, JSU, BCT, BCPE) | `_full` → `_no_tau` → `_no_nu` → `_intercept` |
+| 4-param continuous (SHASH, JSU, BCT, BCPE, ST3, ST4, EGB2) | `_full` → `_no_tau` → `_no_nu` → `_intercept` |
 | 3-param continuous (GG, TF, SN1, PE2, BCCG, exGAUS) | `_full` → `_intercept` |
 | 2-param continuous (NO, LOGNO) | single spec |
-| 4-param discrete (ZISICHEL) | `_full` → `_no_tau` → `_no_nu` → `_no_nu_no_tau` → `_no_sigma` → `_no_sigma_no_tau` → `_no_sigma_no_nu` → `_intercept` |
-| 3-param discrete (ZINBI, ZANBI, ZIPIG, SICHEL, ZASICHEL) | `_full` → `_no_nu` → `_no_sigma` → `_intercept` |
+| 4-param discrete (ZISICHEL, ZASICHEL) | `_full` → `_no_tau` → `_no_nu` → `_no_nu_no_tau` → `_no_sigma` → `_no_sigma_no_tau` → `_no_sigma_no_nu` → `_intercept` |
+| 3-param discrete (ZINBI, ZANBI, ZIPIG, SICHEL) | `_full` → `_no_nu` → `_no_sigma` → `_intercept` |
 | 2-param discrete (NBI, NBII, ZIP, PIG, DPO) | `_full` → `_no_sigma` |
 | 1-param (PO) | single spec |
 
@@ -295,6 +295,13 @@ gamlssHarmo plot  --post output/harmonised_shash/combined_harmonised.csv --suffi
 gamlssHarmo fit   --data data/my_data.csv --n_cores 8
 gamlssHarmo infer --data data/my_data.csv --n_cores 8
 ```
+With `--n_cores > 1`, `diagnose`/`fit`/`infer` display a live text progress bar
+(feature count + ETA) as workers finish, instead of per-feature log lines —
+per-feature logs from worker processes aren't visible in the main console, so
+the progress bar is the only live signal during a parallel run. Detailed
+per-feature logs (family tried, convergence, AIC, etc.) are still written to
+each feature's own output files (e.g. `<feature>_timing.csv`) as before, and
+can be inspected once the run finishes, or tailed live from a second terminal.
 
 ### Longitudinal data
 ```bash
@@ -351,6 +358,11 @@ output/
 | `diagnostics_summary.csv`     | Full distributional statistics for every feature                  |
 | `feature_recommendations.csv` | Trimmed recommendations (family_order, formula terms) for fit stage |
 
+Multiple diagnose runs accumulate into both files by `feature`: re-diagnosing a
+feature (e.g. via `--one_feature` or a smaller `--features_file`) updates only
+that feature's row; rows for features not included in the current run are
+carried forward unchanged, rather than being dropped.
+
 ### Fit stage (`output/models/`)
 
 | File                                    | Description                                                          |
@@ -364,6 +376,12 @@ output/
 | `feature_<n>/<n>_timing.csv`            | Per-feature timing and status                                        |
 | `feature_timings.csv`                   | Running timing table across all features (sequential mode)           |
 | `model_summary.csv`                     | Summary across all features                                          |
+
+`model_summary.csv` is rebuilt each run by rescanning every
+`feature_<n>/<n>_timing.csv` under `output/models/` — it always reflects every
+feature ever fit into this output directory, not just the features covered by
+the current invocation. Re-fitting a feature updates its row in place; fitting
+a different subset of features does not remove rows for features fit earlier.
 
 ### Infer stage (`output/harmonised/`)
 
@@ -400,6 +418,7 @@ are overwritten by the newer result.
 | `optparse`     | >= 1.7    | Argument parsing                             |
 | `logger`       | >= 0.3    | Structured logging                           |
 | `parallel`     | base R    | Parallel processing (no installation needed) |
+| `pbapply`      | >= 1.7    | Live progress bar for `--n_cores > 1` runs   |
 
 Exact versions used in development are pinned in `environment.yml`.
 

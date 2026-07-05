@@ -3,15 +3,16 @@
 # Pre-fitting diagnostic functions for gamlssHarmo.
 #
 # CONTINUOUS mode (discrete = FALSE, default):
-#   1. Residualise for age (quadratic), sex, and batch (fixed effects) via OLS
-#      so the moments reflect the within-batch conditional shape
+#   1. Residualise for age (natural cubic spline), sex, and batch (fixed
+#      effects) via OLS so the moments reflect the within-batch conditional
+#      shape
 #   2. Compute skewness and excess kurtosis on residuals
 #   3. Permutation tests for between-batch variance in skewness and kurtosis
 #   4. Tier assignment and Cullen-Frey family recommendation
 #
 # DISCRETE / COUNT mode (discrete = TRUE):
 #   1. Cast feature to integer before all computation
-#   2. Fit a Poisson GLM (quadratic age + sex) for covariate-adjusted means
+#   2. Fit a Poisson GLM (natural cubic spline age + sex) for covariate-adjusted means
 #   3. Zero-inflation test: one-sided z-test (Hall & Berenhaut 2002)
 #   4. Overdispersion test: Cameron-Trivedi (1990) auxiliary regression
 #   5. Underdispersion test: Cameron-Trivedi lower-tail variant
@@ -33,6 +34,11 @@
 # Output:
 #   diagnostics_summary.csv      full statistics
 #   feature_recommendations.csv  trimmed recommendations for 01_fit.R
+
+# Natural-cubic-spline df for age adjustment (residualisation and count GLMs).
+# A spline rather than poly(age, 2): a global quadratic misfits the pooled
+# lifespan and leaks residual age curvature into the skew/kurtosis batch tests.
+AGE_SPLINE_DF <- 4L
 
 # ---------------------------------------------------------------------------
 # Moment helpers (Type 1, /n, Cullen-Frey convention)
@@ -116,7 +122,7 @@ permutation_test_batch_moment <- function(x, batches, moment_fn,
 }
 
 # ---------------------------------------------------------------------------
-# Residualise a continuous feature for age (quadratic) and sex.
+# Residualise a continuous feature for age (natural cubic spline) and sex.
 # ---------------------------------------------------------------------------
 
 residualise_feature <- function(data, feature_name, batch_var = NULL) {
@@ -136,8 +142,8 @@ residualise_feature <- function(data, feature_name, batch_var = NULL) {
 
   use_batch <- has_batch && !anyNA(df$batch) &&
                nlevels(droplevels(df$batch)) > 1L
-  form <- if (use_batch) y ~ poly(age, 2L) + sex + batch
-          else           y ~ poly(age, 2L) + sex
+  form <- if (use_batch) y ~ splines::ns(age, df = AGE_SPLINE_DF) + sex + batch
+          else           y ~ splines::ns(age, df = AGE_SPLINE_DF) + sex
 
   fit <- tryCatch(lm(form, data = df), error = function(e) NULL)
   if (is.null(fit)) return(df$y - mean(df$y))
@@ -158,7 +164,7 @@ test_zero_inflation <- function(x, age, sex) {
                 obs_zero_rate = NA_real_, exp_zero_rate = NA_real_))
 
   pois_fit <- tryCatch(
-    glm(y ~ poly(age, 2L) + sex, data = df, family = poisson(link = "log")),
+    glm(y ~ splines::ns(age, df = AGE_SPLINE_DF) + sex, data = df, family = poisson(link = "log")),
     error = function(e) NULL
   )
   mu_hat <- if (!is.null(pois_fit)) fitted(pois_fit) else rep(mean(df$y), n)
@@ -198,7 +204,7 @@ test_overdispersion <- function(x, age, sex) {
                 dispersion_ratio = disp_ratio))
 
   pois_fit <- tryCatch(
-    glm(y ~ poly(age, 2L) + sex, data = df, family = poisson(link = "log")),
+    glm(y ~ splines::ns(age, df = AGE_SPLINE_DF) + sex, data = df, family = poisson(link = "log")),
     error = function(e) NULL
   )
   mu_hat <- if (!is.null(pois_fit)) fitted(pois_fit) else rep(ybar, n)
@@ -232,7 +238,7 @@ test_underdispersion <- function(x, age, sex) {
     return(list(statistic = NA_real_, p_value = NA_real_))
 
   pois_fit <- tryCatch(
-    glm(y ~ poly(age, 2L) + sex, data = df, family = poisson(link = "log")),
+    glm(y ~ splines::ns(age, df = AGE_SPLINE_DF) + sex, data = df, family = poisson(link = "log")),
     error = function(e) NULL
   )
   if (is.null(pois_fit))
@@ -266,7 +272,7 @@ compute_dispersion_index <- function(x, age, sex) {
   if (nrow(df) < 20L) return(NA_real_)
 
   pois_fit <- tryCatch(
-    glm(y ~ poly(age, 2L) + sex, data = df, family = poisson(link = "log")),
+    glm(y ~ splines::ns(age, df = AGE_SPLINE_DF) + sex, data = df, family = poisson(link = "log")),
     error = function(e) NULL
   )
   mu_hat <- if (!is.null(pois_fit)) fitted(pois_fit) else rep(mean(df$y), nrow(df))
@@ -413,7 +419,8 @@ assign_tier <- function(skewness, excess_kurtosis,
 #           mu + sigma (non-PO) get random(batch); nu/tau intercept-only.
 # Tier 2 -- Global OD/ZI, or dispersion varies by batch.
 #           Same formula as Tier 1; signals more complex count structure.
-# Tier 3 -- Zero rate varies by batch. random(batch) also in nu (ZI/hurdle).
+# Tier 3 -- Zero rate varies by batch. random(batch) on the ZI/hurdle zero
+#           parameter (nu for 3-param families, tau for 4-param Sichel).
 # Tier 4 -- Severe OD or heavy tail.   As Tier 2/3; Sichel-class families.
 # ---------------------------------------------------------------------------
 
@@ -487,8 +494,10 @@ build_recommended_formulas <- function(tier_result, longitudinal) {
 # Count formula recommendations.
 #
 # sigma gets random(batch) for all non-PO families (age/sex on overdispersion
-# rarely converges). nu gets random(batch) only for ZI/hurdle families at
-# Tier 3 (zero rate varies by batch); SICHEL nu is intercept-only always.
+# rarely converges). The structural-zero probability gets random(batch) at
+# Tier 3 (zero rate varies by batch): on nu for 3-param ZI/hurdle families
+# (ZINBI, ZANBI, ZIPIG), on tau for 4-param ones (ZISICHEL, ZASICHEL, whose nu
+# is the IG shape). SICHEL nu is intercept-only always.
 # ---------------------------------------------------------------------------
 
 build_count_recommended_formulas <- function(tier_result, longitudinal,
@@ -501,20 +510,20 @@ build_count_recommended_formulas <- function(tier_result, longitudinal,
   sigma_terms <- if (primary_family != "PO")
     c("random({batch})") else NULL
 
-  zi_hurdle_families <- c("ZINBI", "ZANBI", "ZISICHEL", "ZASICHEL", "ZIPIG")
+  zi_nu_families  <- c("ZINBI", "ZANBI", "ZIPIG")     # 3-param: nu = zero prob
+  zi_tau_families <- c("ZISICHEL", "ZASICHEL")        # 4-param: tau = zero prob
+  zerorate_batch  <- isTRUE(tier_result$tier >= 3L)
 
-  nu_terms <- if (primary_family %in% zi_hurdle_families) {
-    if (tier_result$tier >= 3L)
-      c("random({batch})")
-    else
-      character(0L)
-  } else if (primary_family == "SICHEL") {
+  nu_terms <- if (primary_family %in% zi_nu_families) {
+    if (zerorate_batch) c("random({batch})") else character(0L)
+  } else if (primary_family %in% c(zi_tau_families, "SICHEL")) {
     character(0L)
   } else {
     NULL
   }
 
-  tau_terms <- NULL
+  tau_terms <- if (primary_family %in% zi_tau_families && zerorate_batch)
+    c("random({batch})") else NULL
 
   list(mu    = mu_terms,
        sigma = sigma_terms,
@@ -587,7 +596,8 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
       logger::log_info(paste0("  ", feature_name,
                               ": zeros present -- positive-support families excluded"))
 
-    if (rng[1L] >= 0) df <- df[df[[feature_name]] >= 0, ]
+    # Counts must be non-negative; continuous features may be real-valued.
+    if (discrete) df <- df[df[[feature_name]] >= 0, ]
 
     n_obs     <- nrow(df)
     n_batches <- length(unique(df[[batch_var]]))
@@ -922,7 +932,7 @@ diagnose_all_features <- function(data, features, output_dir,
       envir = environment()
     )
     parallel::clusterExport(cl,
-      c("diagnose_feature", "residualise_feature",
+      c("diagnose_feature", "residualise_feature", "AGE_SPLINE_DF",
         "compute_skewness", "compute_excess_kurtosis",
         "permutation_test_batch_moment",
         "test_zero_inflation", "test_overdispersion",
@@ -934,12 +944,12 @@ diagnose_all_features <- function(data, features, output_dir,
         "format_time", "%||%"),
       envir = globalenv()
     )
-    results <- parallel::parLapply(cl, features, function(feat) {
+    results <- pbapply::pblapply(features, function(feat) {
       tryCatch(diagnose_one(feat),
                error = function(e)
                  list(status = "error", feature = feat,
                       error_message = e$message, processing_time = 0))
-    })
+    }, cl = cl)
     parallel::stopCluster(cl)
   } else {
     results <- lapply(features, function(feat) {
@@ -996,9 +1006,13 @@ diagnose_all_features <- function(data, features, output_dir,
     for (col in missing_cols) r[[col]] <- NA
     r[, all_cols, drop = FALSE]
   }))
+  # Merge into the existing CSV so re-diagnosing a subset updates only those
+  # rows instead of dropping the rest (diagnose has no per-feature files to rescan).
   summary_path <- file.path(output_dir, "diagnostics_summary.csv")
+  summary_df   <- upsert_rows_by_key(summary_df, summary_path, key_col = "feature")
   write.csv(summary_df, summary_path, row.names = FALSE)
-  logger::log_info(paste0("Saved: ", summary_path))
+  logger::log_info(paste0("Saved: ", summary_path,
+                          " (", nrow(summary_df), " feature(s) on disk)"))
 
   success_results <- Filter(function(x) x$status == "success", results)
 
@@ -1027,8 +1041,10 @@ diagnose_all_features <- function(data, features, output_dir,
     ))
   }
   recs_path <- file.path(output_dir, "feature_recommendations.csv")
+  recs      <- upsert_rows_by_key(recs, recs_path, key_col = "feature")
   write.csv(recs, recs_path, row.names = FALSE)
-  logger::log_info(paste0("Saved: ", recs_path))
+  logger::log_info(paste0("Saved: ", recs_path,
+                          " (", nrow(recs), " feature(s) on disk)"))
 
   elapsed <- as.numeric(difftime(Sys.time(), overall_start, units = "secs"))
   logger::log_info(paste0("Diagnostics complete | success: ", successes,

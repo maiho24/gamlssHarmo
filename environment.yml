@@ -13,3 +13,4 @@ dependencies:
   - r-yaml
   - r-optparse
   - r-logger
+  - r-pbapply

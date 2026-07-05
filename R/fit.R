@@ -61,14 +61,14 @@ build_family_specs <- function(family_name, nu_f, tau_f,
                                sigma_f  = NULL,
                                discrete = FALSE) {
 
-  continuous_four   <- c("SHASH", "JSU", "BCT", "BCPE", "ST4", "EGB2")
-  continuous_three  <- c("GG", "SN1", "TF", "PE2", "ST3", "BCCG", "exGAUS")
+  continuous_four   <- c("SHASH", "JSU", "BCT", "BCPE", "ST3", "ST4", "EGB2")
+  continuous_three  <- c("GG", "SN1", "TF", "PE2", "BCCG", "exGAUS")
 
-  discrete_four     <- c("ZISICHEL")
-  discrete_three_zi <- c("ZINBI", "ZANBI", "ZASICHEL", "ZIPIG")
+  discrete_four     <- c("ZISICHEL", "ZASICHEL")
+  discrete_three_zi <- c("ZINBI", "ZANBI", "ZIPIG")
   discrete_three_sh <- c("SICHEL")
   discrete_two      <- c("NBI", "NBII", "ZIP", "PIG", "DPO")
-  one_param         <- c("PO")
+  one_param         <- c("PO", "EXP")
 
   intercept <- as.formula("~ 1")
 
@@ -158,7 +158,7 @@ build_family_specs <- function(family_name, nu_f, tau_f,
   if (family_name %in% one_param) {
     return(list(
       list(name          = family_name,
-           sigma.formula = sf, nu.formula = NULL, tau.formula = NULL)
+           sigma.formula = intercept, nu.formula = NULL, tau.formula = NULL)
     ))
   }
 
@@ -251,13 +251,13 @@ family_description <- function(base_name) {
     NBI      = "Negative Binomial I: Y_i ~ NBI(mu_i, sigma_i)\n  E[Y] = mu_i,  Var[Y] = mu_i + sigma_i * mu_i^2",
     NBII     = "Negative Binomial II: Y_i ~ NBII(mu_i, sigma_i)\n  E[Y] = mu_i,  Var[Y] = mu_i * (1 + sigma_i * mu_i)",
     ZIP      = "Zero-Inflated Poisson: Y_i ~ (1-sigma_i)*Poisson(mu_i) + sigma_i*I(0)\n  sigma_i = P(structural zero)  [logit link in gamlss.dist]",
-    ZINBI    = "Zero-Inflated NBI: Y_i ~ (1-nu_i)*I(0) + nu_i*NBI(mu_i, sigma_i)\n  nu_i = P(count-generating process)\n  sigma_i = NBI overdispersion",
-    ZANBI    = "Zero-Adjusted NBI (hurdle): P(Y=0) = 1-nu_i,  P(Y=y|y>0) ~ NBI(mu_i,sigma_i) truncated\n  nu_i = P(Y > 0)\n  sigma_i = NBI overdispersion",
+    ZINBI    = "Zero-Inflated NBI: Y_i ~ nu_i*I(0) + (1-nu_i)*NBI(mu_i, sigma_i)\n  nu_i = P(structural zero)\n  sigma_i = NBI overdispersion",
+    ZANBI    = "Zero-Adjusted NBI (hurdle): P(Y=0) = nu_i,  P(Y=y|y>0) ~ NBI(mu_i,sigma_i) truncated\n  nu_i = P(Y = 0)\n  sigma_i = NBI overdispersion",
     PIG      = "Poisson-Inverse Gaussian: Y_i ~ PIG(mu_i, sigma_i)\n  E[Y] = mu_i,  heavier right tail than NBI",
-    ZIPIG    = "Zero-Inflated PIG: Y_i ~ (1-nu_i)*I(0) + nu_i*PIG(mu_i, sigma_i)\n  nu_i = P(count-generating process)",
+    ZIPIG    = "Zero-Inflated PIG: Y_i ~ nu_i*I(0) + (1-nu_i)*PIG(mu_i, sigma_i)\n  nu_i = P(structural zero)",
     SICHEL   = "Sichel: Y_i ~ Sichel(mu_i, sigma_i, nu_i)\n  Poisson mixture with inverse-Gaussian mixing; nu_i = IG shape\n  E[Y] = mu_i,  heavier tail than NBI/PIG",
-    ZISICHEL = "Zero-Inflated Sichel: Y_i ~ (1-tau_i)*I(0) + tau_i*Sichel(mu_i, sigma_i, nu_i)\n  tau_i = P(count-generating process)\n  nu_i = IG shape,  sigma_i = Sichel dispersion",
-    ZASICHEL = "Zero-Adjusted Sichel (hurdle): P(Y=0) = 1-nu_i,  P(Y=y|y>0) ~ Sichel(mu_i,sigma_i) truncated\n  nu_i = P(Y > 0)\n  Preferred when true zeros are clinically distinct",
+    ZISICHEL = "Zero-Inflated Sichel: Y_i ~ tau_i*I(0) + (1-tau_i)*Sichel(mu_i, sigma_i, nu_i)\n  tau_i = P(structural zero)\n  nu_i = IG shape,  sigma_i = Sichel dispersion",
+    ZASICHEL = "Zero-Adjusted Sichel (hurdle): P(Y=0) = tau_i,  P(Y=y|y>0) ~ Sichel(mu_i,sigma_i,nu_i) truncated\n  nu_i = IG shape,  tau_i = P(Y = 0)\n  Preferred when true zeros are clinically distinct",
     DPO      = "Double Poisson: Y_i ~ DPO(mu_i, sigma_i)\n  sigma_i < 1 = overdispersion,  sigma_i > 1 = underdispersion\n  Only family that handles underdispersion natively"
   )
   desc[[base_name]] %||% paste0(base_name, ": no description available")
@@ -281,13 +281,13 @@ param_description <- function(base_name) {
     NBI      = list(mu = "mean count",        sigma = "overdispersion"),
     NBII     = list(mu = "mean count",        sigma = "overdispersion"),
     ZIP      = list(mu = "Poisson mean",      sigma = "P(structural zero)"),
-    ZINBI    = list(mu = "NBI mean",          sigma = "NBI overdispersion",  nu = "P(count-generating)"),
-    ZANBI    = list(mu = "NBI mean",          sigma = "NBI overdispersion",  nu = "P(Y > 0)"),
+    ZINBI    = list(mu = "NBI mean",          sigma = "NBI overdispersion",  nu = "P(structural zero)"),
+    ZANBI    = list(mu = "NBI mean",          sigma = "NBI overdispersion",  nu = "P(Y = 0)"),
     PIG      = list(mu = "mean count",        sigma = "dispersion"),
-    ZIPIG    = list(mu = "PIG mean",          sigma = "PIG dispersion",      nu = "P(count-generating)"),
+    ZIPIG    = list(mu = "PIG mean",          sigma = "PIG dispersion",      nu = "P(structural zero)"),
     SICHEL   = list(mu = "mean count",        sigma = "dispersion",          nu = "IG shape"),
-    ZISICHEL = list(mu = "Sichel mean",       sigma = "Sichel dispersion",   nu = "IG shape",    tau = "P(count-generating)"),
-    ZASICHEL = list(mu = "Sichel mean",       sigma = "Sichel dispersion",   nu = "P(Y > 0)"),
+    ZISICHEL = list(mu = "Sichel mean",       sigma = "Sichel dispersion",   nu = "IG shape",    tau = "P(structural zero)"),
+    ZASICHEL = list(mu = "Sichel mean",       sigma = "Sichel dispersion",   nu = "IG shape",    tau = "P(Y = 0)"),
     DPO      = list(mu = "mean count",        sigma = "dispersion index")
   )[[base_name]] %||% list(mu = "mu", sigma = "sigma", nu = "nu", tau = "tau")
 }
@@ -439,7 +439,10 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
     model_data <- data[, keep_cols, drop = FALSE]
     model_data <- model_data[
       Reduce("&", lapply(keep_cols, function(col) !is.na(model_data[[col]]))), ]
-    model_data <- model_data[model_data[[feature_name]] >= 0, ]
+    # Counts and log(y+1)-transformed responses must be non-negative; raw
+    # continuous features may legitimately take real (incl. negative) values.
+    if (eff_discrete || log_transform)
+      model_data <- model_data[model_data[[feature_name]] >= 0, ]
 
     model_data[[batch_var]] <- factor(model_data[[batch_var]])
     model_data[[id_var]]    <- factor(model_data[[id_var]])
@@ -455,11 +458,19 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
     if (n_batches < 2) {
       logger::log_info(paste0("  Skipping -- only 1 batch level"))
       elapsed <- as.numeric(difftime(Sys.time(), feature_start, units = "secs"))
-      write.csv(data.frame(feature   = feature_name,
-                           reason    = "single batch",
-                           timestamp = as.character(Sys.time())),
+      # Covers rebuild_model_summary()'s columns so the skip still lands in
+      # model_summary.csv.
+      write.csv(data.frame(feature        = feature_name,
+                           status         = "skipped_single_batch",
+                           distribution   = NA_character_,
+                           discrete       = NA,
+                           n_observations = n_obs,
+                           n_batches      = n_batches,
+                           error_message  = "single batch",
+                           time_secs      = elapsed),
                 paths$timing, row.names = FALSE)
       return(list(status = "skipped_single_batch", feature = feature_name,
+                  n_observations = n_obs, n_batches = n_batches,
                   processing_time = elapsed))
     }
 
@@ -656,6 +667,47 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
 }
 
 # ---------------------------------------------------------------------------
+# Rebuild model_summary.csv from every feature_<name>/<name>_timing.csv so it
+# reflects all features ever fit here, not just the current run's subset.
+# Timing files are read by column name, so the differing per-status schemas
+# (success / error / skipped) are tolerated; absent columns become NA.
+# ---------------------------------------------------------------------------
+
+rebuild_model_summary <- function(output_dir) {
+  cols <- c("feature", "status", "distribution", "discrete",
+           "n_observations", "n_batches", "error_message", "time_secs")
+
+  feat_dirs <- list.dirs(output_dir, full.names = TRUE, recursive = FALSE)
+  feat_dirs <- feat_dirs[grepl("^feature_", basename(feat_dirs))]
+
+  rows <- lapply(feat_dirs, function(fd) {
+    feat_name   <- sub("^feature_", "", basename(fd))
+    timing_path <- file.path(fd, paste0(feat_name, "_timing.csv"))
+    if (!file.exists(timing_path)) return(NULL)
+
+    t <- tryCatch(read.csv(timing_path, stringsAsFactors = FALSE),
+                  error = function(e) NULL)
+    if (is.null(t) || nrow(t) == 0L) return(NULL)
+    t <- t[1L, , drop = FALSE]
+
+    row <- data.frame(feature = feat_name, stringsAsFactors = FALSE)
+    for (col in setdiff(cols, "feature"))
+      row[[col]] <- if (col %in% names(t)) t[[col]] else NA
+    row[, cols, drop = FALSE]
+  })
+  rows <- Filter(Negate(is.null), rows)
+
+  if (length(rows) == 0L) {
+    empty <- as.data.frame(setNames(lapply(cols, function(x) character(0)), cols),
+                           stringsAsFactors = FALSE)
+    return(empty)
+  }
+
+  summary_df <- do.call(rbind, rows)
+  summary_df[order(summary_df$feature), , drop = FALSE]
+}
+
+# ---------------------------------------------------------------------------
 # Fit all features.
 # ---------------------------------------------------------------------------
 
@@ -718,12 +770,12 @@ run_gamlss_harmonisation <- function(data, features, output_dir, formula_terms,
         ".SMOOTHER_FNS", "%||%"),
       envir = globalenv()
     )
-    results <- parallel::parLapply(cl, features, function(feat) {
+    results <- pbapply::pblapply(features, function(feat) {
       tryCatch(fit_one(feat),
                error = function(e)
                  list(status = "error", feature = feat,
                       error = e$message, processing_time = 0))
-    })
+    }, cl = cl)
     parallel::stopCluster(cl)
   } else {
     results <- vector("list", length(features))
@@ -757,33 +809,32 @@ run_gamlss_harmonisation <- function(data, features, output_dir, formula_terms,
   failures  <- sum(statuses == "error")
   skipped   <- sum(statuses != "success" & statuses != "error")
 
-  summary_rows <- lapply(results, function(r) {
+  # This run's results only, for the "Failed features" log; the on-disk
+  # model_summary.csv is rebuilt from all feature dirs (rebuild_model_summary()).
+  run_summary_df <- do.call(rbind, lapply(results, function(r) {
     data.frame(
       feature        = r$feature          %||% NA_character_,
       status         = r$status           %||% NA_character_,
-      distribution   = r$distribution     %||% NA_character_,
-      discrete       = r$discrete         %||% NA,
-      n_observations = r$n_observations   %||% NA_integer_,
-      n_batches      = r$n_batches        %||% NA_integer_,
       error_message  = r$error            %||% NA_character_,
-      time_secs      = r$processing_time  %||% NA_real_,
       stringsAsFactors = FALSE
     )
-  })
-  summary_df <- do.call(rbind, summary_rows)
-  summary_path <- file.path(output_dir, "model_summary.csv")
-  write.csv(summary_df, summary_path, row.names = FALSE)
-  logger::log_info(paste0("Model summary: ", summary_path))
+  }))
 
   if (failures > 0L) {
-    failed_df <- summary_df[!is.na(summary_df$status) &
-                              summary_df$status == "error", , drop = FALSE]
+    failed_df <- run_summary_df[!is.na(run_summary_df$status) &
+                                  run_summary_df$status == "error", , drop = FALSE]
     logger::log_info("Failed features:")
     for (i in seq_len(nrow(failed_df))) {
       logger::log_info(paste0("  ", failed_df$feature[i], ": ",
                               failed_df$error_message[i]))
     }
   }
+
+  summary_df   <- rebuild_model_summary(output_dir)
+  summary_path <- file.path(output_dir, "model_summary.csv")
+  write.csv(summary_df, summary_path, row.names = FALSE)
+  logger::log_info(paste0("Model summary: ", summary_path,
+                          " (", nrow(summary_df), " feature(s) on disk)"))
 
   total_time <- format_time(as.numeric(difftime(Sys.time(), overall_start,
                                                 units = "secs")))

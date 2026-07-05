@@ -150,7 +150,7 @@ parser <- OptionParser(
     "",
     "Examples:",
     "  gamlssHarmo infer --data data/raw/my_data.csv --output output/",
-    "  gamlssHarmo infer --data data/eval.csv --output output/ --one-feature ThicknessAvg",
+    "  gamlssHarmo infer --data data/eval.csv --output output/ --one_feature ThicknessAvg",
     "  gamlssHarmo infer --data data/eval.csv --output output/ --normative FALSE",
     sep = "\n"
   ),

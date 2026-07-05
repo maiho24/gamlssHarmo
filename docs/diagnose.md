@@ -14,6 +14,10 @@ first is strongly recommended.
 | `diagnostics_summary.csv` | `output/diagnostics/` | Full per-feature statistics — skewness, kurtosis, batch test results, tier assignment |
 | `feature_recommendations.csv` | `output/diagnostics/` | Trimmed recommendations ready to pass to fit with `--feature_families` |
 
+Both files accumulate across runs, keyed by `feature`: re-running diagnose for
+one feature (e.g. `--one_feature`) updates only that feature's row in each
+file and leaves rows for every other previously diagnosed feature untouched.
+
 ---
 
 ## Step-by-step workflow
@@ -72,9 +76,14 @@ Used for imaging-derived measures, cognitive scores, and any real-valued feature
 
 **Steps internally:**
 1. Rows with missing feature, age, or sex values are removed.
-2. The feature is residualised for age (quadratic), sex, and batch as fixed
-   effects (`lm(y ~ poly(age, 2) + sex + batch)`) so the moments reflect the
-   within-batch conditional shape rather than between-batch mixing.
+2. The feature is residualised for age (natural cubic spline, 4 df), sex, and
+   batch as fixed effects (`lm(y ~ splines::ns(age, df = 4) + sex + batch)`)
+   so the moments reflect the within-batch conditional shape rather than
+   between-batch mixing. A spline is used instead of a low-order polynomial
+   because a single global polynomial fits poorly across a pooled age range
+   spanning childhood growth, adolescent development, adult plateau, and
+   late-life decline; a rigid fit can leave residual age curvature that gets
+   misattributed to skewness/kurtosis batch effects.
 3. Skewness (Type 1, /n) and excess kurtosis are computed on the residuals.
 4. A permutation test checks whether the between-batch variance in skewness
    (and kurtosis) is larger than expected by chance.
@@ -87,7 +96,8 @@ with a bounded integer range.
 
 **Steps internally:**
 1. Feature values are cast to integer via `round()`.
-2. A Poisson GLM is fitted (quadratic age + sex) to get covariate-adjusted means.
+2. A Poisson GLM is fitted (natural cubic spline age, 4 df, + sex) to get
+   covariate-adjusted means.
 3. **Zero-inflation test** (Hall & Berenhaut 2002): one-sided z-test comparing
    observed zero count to the Poisson-predicted zero count.
 4. **Overdispersion test** (Cameron-Trivedi 1990): auxiliary regression of

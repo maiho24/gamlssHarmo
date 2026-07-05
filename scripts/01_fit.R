@@ -135,7 +135,7 @@ option_list <- list(
       "If TRUE, treats all features as count/discrete data.",
       "Skips z-scoring and log transformation. Passes raw integer counts",
       "to gamlss(). Supported families: PO, NBI, NBII, ZIP, ZINBI, ZANBI.",
-      "Per-feature 'discrete' flags from --feature-families take priority.",
+      "Per-feature 'discrete' flags from --feature_families take priority.",
       "[default: FALSE]"
     )),
 
@@ -146,7 +146,7 @@ option_list <- list(
     help    = paste(
       "Comma-separated global family fallback order. Overrides config and mode defaults.",
       "Continuous default: SHASH,GG,NO. Discrete default: ZINBI,NBI,PO.",
-      "Overridden per-feature by --feature-families."
+      "Overridden per-feature by --feature_families."
     )),
 
   make_option("--n_cores",

@@ -238,7 +238,8 @@ harmonise_gamlss_feature <- function(model_file, data, output_dir,
     model_data <- data[, keep_cols, drop = FALSE]
     model_data <- model_data[
       Reduce("&", lapply(keep_cols, function(col) !is.na(model_data[[col]]))), ]
-    model_data <- model_data[model_data[[feature_name]] >= 0, ]
+    if (discrete || log_transform)
+      model_data <- model_data[model_data[[feature_name]] >= 0, ]
 
     model_data[[batch_var]] <- factor(model_data[[batch_var]])
     model_data[[id_var]]    <- factor(model_data[[id_var]])
@@ -432,7 +433,7 @@ harmonise_all_gamlss_models <- function(model_base_dir, data,
         "format_time", "%||%"),
       envir = globalenv()
     )
-    results <- parallel::parLapply(cl, model_files, process_one)
+    results <- pbapply::pblapply(model_files, process_one, cl = cl)
     parallel::stopCluster(cl)
   } else {
     results <- vector("list", length(model_files))

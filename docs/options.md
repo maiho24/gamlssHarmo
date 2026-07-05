@@ -5,6 +5,14 @@ equivalent in `config/params.yml`; the CLI always takes priority over the config
 file. See the [README](../README.md) for the quick-start workflow and
 [`diagnose.md`](diagnose.md) for the diagnostic stage in depth.
 
+> **`--n_cores` and progress reporting:** with `--n_cores 1` (the default),
+> `diagnose`/`fit`/`infer` log progress per feature as they go. With
+> `--n_cores > 1`, per-feature logs are produced by worker processes and are
+> not shown in the main console; instead, a live text progress bar (features
+> completed + ETA) is shown while the batch runs. Per-feature detail is still
+> written to each feature's own output files (e.g. `<feature>_timing.csv`)
+> and can be inspected once the run finishes.
+
 ---
 
 ## `00_diagnose.R` *(optional but recommended for multiple features)*

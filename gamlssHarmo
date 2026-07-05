@@ -31,7 +31,7 @@ Typical workflow:
      -> Edit if needed (family_order, nu_terms, tau_terms columns)
 
   2. gamlssHarmo fit --data data/raw/my_data.csv \\
-       --feature-families output/diagnostics/feature_recommendations.csv
+       --feature_families output/diagnostics/feature_recommendations.csv
 
   3. gamlssHarmo infer --data data/raw/my_data.csv
 

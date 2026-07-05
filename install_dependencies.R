@@ -9,13 +9,13 @@
 #   conda env create -f environment.yml
 #   conda activate gamlssHarmo
 #   Rscript install_dependencies.R
-#   -> gamlssHarmo is immediately available in the active environment.
 
 options(repos = c(CRAN = Sys.getenv("CRAN_MIRROR",
                                      unset = "https://cloud.r-project.org")))
 
 pkgs         <- c("gamlss", "gamlss.dist", "dplyr", "ggplot2",
-                  "scales", "RColorBrewer", "yaml", "optparse", "logger")
+                  "scales", "RColorBrewer", "yaml", "optparse", "logger",
+                  "pbapply")
 missing_pkgs <- pkgs[!sapply(pkgs, requireNamespace, quietly = TRUE)]
 
 if (length(missing_pkgs) == 0) {

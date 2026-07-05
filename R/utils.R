@@ -168,13 +168,13 @@ normalise_column_names <- function(data, age_var, sex_var) {
 get_n_params <- function(family_name) {
   base_name <- strsplit(family_name, "_")[[1L]][1L]
   # 4-parameter families
-  if (base_name %in% c("SHASH", "JSU", "BCT", "BCPE", "ST4", "EGB2",
-                        "ZISICHEL"))
+  if (base_name %in% c("SHASH", "JSU", "BCT", "BCPE", "ST3", "ST4", "EGB2",
+                        "ZISICHEL", "ZASICHEL"))
     return(4L)
   # 3-parameter families
-  if (base_name %in% c("GG", "SN1", "TF", "PE2", "ST3", "BCCG",
+  if (base_name %in% c("GG", "SN1", "TF", "PE2", "BCCG",
                         "ZINBI", "ZANBI",
-                        "SICHEL", "ZASICHEL", "ZIPIG", "exGAUS"))
+                        "SICHEL", "ZIPIG", "exGAUS"))
     return(3L)
   # 1-parameter families
   if (base_name %in% c("PO", "EXP"))
@@ -192,4 +192,25 @@ setup_logging <- function(log_dir, stage_name) {
   logger::log_formatter(logger::formatter_paste)
   logger::log_appender(logger::appender_tee(log_file))
   invisible(log_file)
+}
+
+# Upsert new_df into the CSV at existing_path by key_col: matching keys are
+# replaced, rows only on disk are kept. Lets a run update a subset of features
+# without dropping the rest. Column sets are unioned and NA-filled.
+upsert_rows_by_key <- function(new_df, existing_path, key_col = "feature") {
+  if (!file.exists(existing_path)) return(new_df)
+
+  old_df <- tryCatch(read.csv(existing_path, stringsAsFactors = FALSE),
+                     error = function(e) NULL)
+  if (is.null(old_df) || !key_col %in% names(old_df)) return(new_df)
+
+  old_keep <- old_df[!old_df[[key_col]] %in% new_df[[key_col]], , drop = FALSE]
+  if (nrow(old_keep) == 0L) return(new_df)
+
+  all_cols <- union(names(new_df), names(old_keep))
+  fill_cols <- function(df) {
+    for (col in setdiff(all_cols, names(df))) df[[col]] <- NA
+    df[, all_cols, drop = FALSE]
+  }
+  rbind(fill_cols(new_df), fill_cols(old_keep))
 }
