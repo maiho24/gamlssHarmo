@@ -2,7 +2,6 @@
 suppressPackageStartupMessages({
   library(optparse)
   library(yaml)
-  library(dplyr)
   library(logger)
 })
 
@@ -138,6 +137,29 @@ option_list <- list(
     metavar = "N",
     help    = "Minimum observations per batch for permutation tests. [default: 50]"),
 
+  make_option("--seed",
+    type    = "integer",
+    default = NULL,
+    metavar = "N",
+    help    = "RNG seed for permutation tests. Recorded in diagnostics_summary.csv. [default: 20260818]"),
+
+  make_option("--stratify_permutation",
+    type    = "character",
+    default = NULL,
+    metavar = "TRUE/FALSE",
+    help    = paste(
+      "If TRUE, batch labels are permuted only within age x sex strata and at the",
+      "subject level, and strata containing a single batch are excluded.",
+      "Required when batch is confounded with age (multi-cohort lifespan designs).",
+      "FALSE reproduces the unconditional row-level test. [default: TRUE]"
+    )),
+
+  make_option("--n_age_bands",
+    type    = "integer",
+    default = NULL,
+    metavar = "N",
+    help    = "Number of age quantile bands for stratified permutation. [default: 10]"),
+
   make_option("--thresh_skew",
     type    = "numeric",
     default = NULL,
@@ -237,6 +259,10 @@ discrete     <- as.logical(resolve_arg(opt$discrete,     cfg$model$discrete,    
 n_perm       <- as.integer(resolve_arg(opt$n_perm,      dcfg$n_perm,      499L))
 min_batch_n  <- as.integer(resolve_arg(opt$min_batch_n, dcfg$min_batch_n,   50L))
 n_cores      <- as.integer(resolve_arg(opt$n_cores,     cfg$compute$n_cores, 1L))
+seed         <- as.integer(resolve_arg(opt$seed,        dcfg$seed, 20260818L))
+n_age_bands  <- as.integer(resolve_arg(opt$n_age_bands, dcfg$n_age_bands,  10L))
+stratify     <- as.logical(resolve_arg(opt$stratify_permutation,
+                                        dcfg$stratify_permutation, TRUE))
 
 thresholds <- list(
   skew                 = as.numeric(resolve_arg(opt$thresh_skew,              dcfg$thresh_skew,              0.5)),
@@ -264,6 +290,9 @@ log_info(paste0("longitudinal:    ", longitudinal))
 log_info(paste0("discrete:        ", discrete))
 log_info(paste0("n_perm:          ", n_perm))
 log_info(paste0("min_batch_n:     ", min_batch_n))
+log_info(paste0("seed:            ", seed))
+log_info(paste0("stratify perm:   ", stratify,
+                if (stratify) paste0(" (", n_age_bands, " age bands x sex)") else ""))
 log_info(paste0("n_cores:         ", n_cores))
 
 if (is.null(raw_csv) || !nzchar(raw_csv)) {
@@ -313,7 +342,10 @@ results <- diagnose_all_features(
   min_batch_n    = min_batch_n,
   thresholds     = thresholds,
   user_overrides = user_overrides,
-  n_cores        = n_cores
+  n_cores        = n_cores,
+  seed           = seed,
+  stratify       = stratify,
+  n_age_bands    = n_age_bands
 )
 
 log_info(paste0("=== diagnose complete ===",

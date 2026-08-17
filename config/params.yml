@@ -81,6 +81,17 @@ diagnostics:
   # studies with n < 50 per site).
   min_batch_n: 50
 
+  # RNG seed for the permutation tests. Recorded in diagnostics_summary.csv.
+  # Applied per feature, so results do not depend on n_cores.
+  seed: 20260818
+
+  # Permute batch labels within age-band x sex strata, at the subject level,
+  # and drop strata containing a single batch. Set FALSE only to reproduce the
+  # unconditional row-level test; leave TRUE whenever batch is associated with
+  # age, which is the norm for multi-cohort lifespan data.
+  stratify_permutation: true
+  n_age_bands: 10
+
   # Tier 1 (near-Gaussian) thresholds.
   # A feature is Tier 1 when BOTH |skewness| < thresh_skew AND
   # |excess kurtosis| < thresh_kurt. Tier 1 features get simpler formulas

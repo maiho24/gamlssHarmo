@@ -65,64 +65,127 @@ compute_excess_kurtosis <- function(x) {
 }
 
 # ---------------------------------------------------------------------------
+# Per-feature RNG seed.
+#
+# Derived from the feature name rather than its position so that re-running a
+# subset (--one_feature) reproduces the p-values that feature had in a full run.
+# Collisions between features are harmless: the analyses are independent.
+# ---------------------------------------------------------------------------
+
+feature_seed <- function(base_seed, feature_name) {
+  chars <- utf8ToInt(feature_name)
+  as.integer((base_seed + sum(chars * seq_along(chars))) %% 2147483647)
+}
+
+# ---------------------------------------------------------------------------
+# Age x sex strata for the permutation null.
+# ---------------------------------------------------------------------------
+
+build_strata <- function(age, sex, n_bands = 10L) {
+  br <- unique(quantile(age, seq(0, 1, length.out = n_bands + 1L), na.rm = TRUE))
+  if (length(br) < 2L) return(rep("all", length(age)))
+  paste0("b", cut(age, br, include.lowest = TRUE, labels = FALSE),
+         "_", as.character(sex))
+}
+
+# ---------------------------------------------------------------------------
 # Permutation test for between-batch variation in a distributional moment.
+#
+# Batch is typically confounded with age in a multi-cohort design, so labels are
+# shuffled only within a stratum; strata holding a single batch carry no batch
+# contrast and are dropped, which restricts the test to shared age support.
+# Batch is constant within subject, so the exchangeable unit is the subject.
+# Passing strata = NULL and subjects = NULL recovers the unconditional row-level
+# test. The null range is accumulated alongside the null variance so the
+# effect-size guard can be calibrated rather than fixed.
 # ---------------------------------------------------------------------------
 
 permutation_test_batch_moment <- function(x, batches, moment_fn,
                                            n_perm      = 499L,
-                                           min_batch_n = 50L) {
-  ok      <- is.finite(x) & !is.na(batches)
-  x       <- x[ok]
-  batches <- as.character(batches[ok])
+                                           min_batch_n = 50L,
+                                           subjects    = NULL,
+                                           strata      = NULL) {
+  ok <- is.finite(x) & !is.na(batches)
+  if (!is.null(strata))   ok <- ok & !is.na(strata)
+  if (!is.null(subjects)) ok <- ok & !is.na(subjects)
 
-  tab    <- table(batches)
-  keep   <- names(tab)[tab >= min_batch_n]
-  n_keep <- length(keep)
+  x        <- x[ok]
+  batches  <- as.character(batches[ok])
+  strata   <- if (is.null(strata))   rep("all", length(x))      else as.character(strata[ok])
+  subjects <- if (is.null(subjects)) as.character(seq_along(x)) else as.character(subjects[ok])
 
-  if (n_keep < 2L)
-    return(list(observed_variance = NA_real_,
-                p_value           = NA_real_,
-                n_batches_used    = n_keep,
-                per_batch_values  = NULL,
-                per_batch_range   = NA_real_))
+  na_out <- function(n_used, frac, vals = NULL)
+    list(observed_variance = NA_real_,
+         p_value           = NA_real_,
+         p_range           = NA_real_,
+         n_batches_used    = n_used,
+         per_batch_values  = vals,
+         per_batch_range   = NA_real_,
+         frac_common       = frac)
+
+  su <- data.frame(subject = subjects, batch = batches, stratum = strata,
+                   stringsAsFactors = FALSE)
+  su <- su[!duplicated(su$subject), ]
+
+  n_bat  <- tapply(su$batch, su$stratum, function(z) length(unique(z)))
+  su     <- su[su$stratum %in% names(n_bat)[n_bat >= 2L], ]
+  row_ok <- subjects %in% su$subject
+  frac   <- mean(row_ok)
+
+  x <- x[row_ok]; batches <- batches[row_ok]; subjects <- subjects[row_ok]
+  if (length(x) < 2L) return(na_out(0L, frac))
+
+  tab  <- table(batches)
+  keep <- names(tab)[tab >= min_batch_n]
+  if (length(keep) < 2L) return(na_out(length(keep), frac))
 
   mask <- batches %in% keep
   x_s  <- x[mask]
   b_s  <- batches[mask]
+  su   <- su[su$batch %in% keep, ]
+  idx  <- match(subjects[mask], su$subject)
 
   per_batch <- vapply(keep, function(b)
     moment_fn(x_s[b_s == b]), numeric(1L))
   per_batch <- per_batch[is.finite(per_batch)]
 
-  if (length(per_batch) < 2L)
-    return(list(observed_variance = NA_real_,
-                p_value           = NA_real_,
-                n_batches_used    = length(per_batch),
-                per_batch_values  = per_batch,
-                per_batch_range   = NA_real_))
+  if (length(per_batch) < 2L) return(na_out(length(per_batch), frac, per_batch))
 
-  obs_var <- var(per_batch)
+  obs_var   <- var(per_batch)
+  obs_range <- diff(range(per_batch))
 
-  perm_vars <- replicate(n_perm, {
-    b_perm <- sample(b_s)
+  st_idx <- split(seq_len(nrow(su)), su$stratum)
+  perm   <- replicate(n_perm, {
+    b_new <- su$batch
+    for (ii in st_idx) if (length(ii) > 1L) b_new[ii] <- sample(su$batch[ii])
+    b_perm <- b_new[idx]
     vals   <- vapply(keep, function(b)
       moment_fn(x_s[b_perm == b]), numeric(1L))
     vals   <- vals[is.finite(vals)]
-    if (length(vals) < 2L) NA_real_ else var(vals)
+    if (length(vals) < 2L) c(NA_real_, NA_real_)
+    else                   c(var(vals), diff(range(vals)))
   })
-  perm_vars <- perm_vars[is.finite(perm_vars)]
-  p_val     <- if (length(perm_vars) > 0L)
-    (1 + sum(perm_vars >= obs_var)) / (1 + length(perm_vars)) else NA_real_
+
+  pv <- perm[1L, ][is.finite(perm[1L, ])]
+  pr <- perm[2L, ][is.finite(perm[2L, ])]
 
   list(observed_variance = obs_var,
-       p_value           = p_val,
+       p_value           = if (length(pv) > 0L) (1 + sum(pv >= obs_var))   / (1 + length(pv)) else NA_real_,
+       p_range           = if (length(pr) > 0L) (1 + sum(pr >= obs_range)) / (1 + length(pr)) else NA_real_,
        n_batches_used    = length(per_batch),
        per_batch_values  = per_batch,
-       per_batch_range   = diff(range(per_batch)))
+       per_batch_range   = obs_range,
+       frac_common       = frac)
 }
 
 # ---------------------------------------------------------------------------
 # Residualise a continuous feature for age (natural cubic spline) and sex.
+#
+# A second-stage model of log(e^2) on the same design supplies studentised
+# residuals and a direct test of whether sigma depends on age or sex. Raw
+# residuals from a homoscedastic fit are a scale mixture, which carries excess
+# kurtosis 3 * CV^2(sigma^2) even when every conditional distribution is
+# Gaussian; studentising removes that from the shape statistics.
 # ---------------------------------------------------------------------------
 
 residualise_feature <- function(data, feature_name, batch_var = NULL) {
@@ -135,9 +198,13 @@ residualise_feature <- function(data, feature_name, batch_var = NULL) {
   if (has_batch) df$batch <- as.factor(data[[batch_var]])
 
   df <- df[is.finite(df$y) & is.finite(df$age) & !is.na(df$sex), ]
+
+  plain <- function(e)
+    list(residuals = e, studentised = e, sigma_p = NA_real_, sigma_cv2 = NA_real_)
+
   if (nrow(df) < 10L) {
     warning("Too few observations to residualise '", feature_name, "'")
-    return(df$y - mean(df$y, na.rm = TRUE))
+    return(plain(df$y - mean(df$y, na.rm = TRUE)))
   }
 
   use_batch <- has_batch && !anyNA(df$batch) &&
@@ -146,8 +213,21 @@ residualise_feature <- function(data, feature_name, batch_var = NULL) {
           else           y ~ splines::ns(age, df = AGE_SPLINE_DF) + sex
 
   fit <- tryCatch(lm(form, data = df), error = function(e) NULL)
-  if (is.null(fit)) return(df$y - mean(df$y))
-  residuals(fit)
+  if (is.null(fit)) return(plain(df$y - mean(df$y)))
+  e <- residuals(fit)
+
+  df$lv  <- log(pmax(e^2, .Machine$double.eps))
+  v_full <- tryCatch(lm(update(form, lv ~ .), data = df), error = function(e) NULL)
+  v_null <- tryCatch(if (use_batch) lm(lv ~ batch, data = df) else lm(lv ~ 1, data = df),
+                     error = function(e) NULL)
+  if (is.null(v_full) || is.null(v_null)) return(plain(e))
+
+  sigma2 <- exp(fitted(v_full))
+  list(residuals   = e,
+       studentised = e / sqrt(sigma2),
+       sigma_p     = tryCatch(anova(v_null, v_full)[2L, "Pr(>F)"],
+                              error = function(e) NA_real_),
+       sigma_cv2   = var(sigma2) / mean(sigma2)^2)
 }
 
 # ---------------------------------------------------------------------------
@@ -320,15 +400,15 @@ suggest_families <- function(skewness, excess_kurtosis,
   } else if (has_near_zero) {
     if (abs(s) < 0.5 && abs(k) < 1.0)  base <- c("SHASH", "NO", "TF")
     else if (abs(s) < 0.5 && k > 1.0)  base <- c("TF", "SHASH", "NO")
-    else if (abs(s) < 0.5 && k < -0.5) base <- c("NO", "PE2")
-    else if (s > 0.5 || s < -0.5)      base <- c("SHASH", "JSU", "SN1", "NO")
+    else if (abs(s) < 0.5 && k <= -1.0) base <- c("NO", "PE2")
+    else if (abs(s) > 0.5)             base <- c("SHASH", "JSU", "SN1", "NO")
     else                                base <- c("SHASH", "JSU", "TF", "NO")
 
   } else {
     if (abs(s) < 0.5 && abs(k) < 1.0)  base <- c("NO", "TF", "SHASH")
     else if (abs(s) < 0.5 && k > 1.0)  base <- c("TF", "SHASH", "NO")
-    else if (abs(s) < 0.5 && k < -0.5) base <- c("NO", "PE2")
-    else if (s > 0.5 || s < -0.5)      base <- c("SHASH", "JSU", "SN1", "NO")
+    else if (abs(s) < 0.5 && k <= -1.0) base <- c("NO", "PE2")
+    else if (abs(s) > 0.5)             base <- c("SHASH", "JSU", "SN1", "NO")
     else                                base <- c("SHASH", "JSU", "TF", "NO")
   }
 
@@ -387,22 +467,28 @@ suggest_count_families <- function(zero_inflated, overdispersed,
 assign_tier <- function(skewness, excess_kurtosis,
                          batch_skew_pval,  batch_skew_range,
                          batch_kurt_pval,  batch_kurt_range,
-                         thresholds) {
+                         thresholds,
+                         batch_skew_prange = NA_real_,
+                         batch_kurt_prange = NA_real_) {
 
   near_gaussian <- !is.na(skewness) &&
                    abs(skewness) < thresholds$skew &&
                    !is.na(excess_kurtosis) &&
                    abs(excess_kurtosis) < thresholds$kurt
 
-  skew_batch <- !is.na(batch_skew_pval) &&
-                 batch_skew_pval < thresholds$pval &&
-                 !is.na(batch_skew_range) &&
-                 batch_skew_range >= thresholds$min_skew_range
+  # The permuted range gives a null the fixed min_*_range cannot: it adapts to
+  # batch sizes and to the tail weight of the feature. The constant is retained
+  # as an absolute floor.
+  gate <- function(pval, prange, rng, min_rng)
+    !is.na(pval)   && pval   < thresholds$pval &&
+    !is.na(prange) && prange < thresholds$pval &&
+    !is.na(rng)    && rng   >= min_rng
 
-  kurt_batch <- !is.na(batch_kurt_pval) &&
-                 batch_kurt_pval < thresholds$pval &&
-                 !is.na(batch_kurt_range) &&
-                 batch_kurt_range >= thresholds$min_kurt_range
+  skew_batch <- gate(batch_skew_pval, batch_skew_prange,
+                     batch_skew_range, thresholds$min_skew_range)
+
+  kurt_batch <- gate(batch_kurt_pval, batch_kurt_prange,
+                     batch_kurt_range, thresholds$min_kurt_range)
 
   tier <- if (skew_batch || kurt_batch) 3L else if (!near_gaussian) 2L else 1L
 
@@ -429,17 +515,20 @@ assign_count_tier <- function(zero_inflated, overdispersed,
                                batch_dispersion_pval, batch_dispersion_range,
                                thresholds,
                                dispersion_index = NA_real_,
-                               tail_heaviness   = NA_real_) {
+                               tail_heaviness   = NA_real_,
+                               batch_zerorate_prange   = NA_real_,
+                               batch_dispersion_prange = NA_real_) {
 
-  zerorate_batch <- !is.na(batch_zerorate_pval) &&
-                    batch_zerorate_pval  < thresholds$pval &&
-                    !is.na(batch_zerorate_range) &&
-                    batch_zerorate_range >= thresholds$min_zerorate_range
+  gate <- function(pval, prange, rng, min_rng)
+    !is.na(pval)   && pval   < thresholds$pval &&
+    !is.na(prange) && prange < thresholds$pval &&
+    !is.na(rng)    && rng   >= min_rng
 
-  dispersion_batch <- !is.na(batch_dispersion_pval) &&
-                      batch_dispersion_pval  < thresholds$pval &&
-                      !is.na(batch_dispersion_range) &&
-                      batch_dispersion_range >= thresholds$min_dispersion_range
+  zerorate_batch <- gate(batch_zerorate_pval, batch_zerorate_prange,
+                         batch_zerorate_range, thresholds$min_zerorate_range)
+
+  dispersion_batch <- gate(batch_dispersion_pval, batch_dispersion_prange,
+                           batch_dispersion_range, thresholds$min_dispersion_range)
 
   severe_od  <- isTRUE(overdispersed) &&
                 !is.na(dispersion_index) && dispersion_index > 3.0
@@ -565,8 +654,11 @@ read_feature_recommendations_csv <- function(path) {
 
 diagnose_feature <- function(data, feature_name, batch_var, id_var,
                               longitudinal, discrete, n_perm, min_batch_n,
-                              thresholds, user_override = NULL) {
+                              thresholds, user_override = NULL,
+                              seed = NULL, stratify = TRUE, n_age_bands = 10L) {
   start <- Sys.time()
+  # kind is pinned so a worker's RNG type cannot change the stream.
+  if (!is.null(seed)) set.seed(seed, kind = "Mersenne-Twister")
   logger::log_info(paste0("Diagnosing: ", feature_name,
                           if (discrete) " [discrete]" else ""))
 
@@ -576,7 +668,10 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
     if (length(missing) > 0L)
       stop("Missing columns: ", paste(missing, collapse = ", "))
 
-    df <- data[!is.na(data[[feature_name]]) &
+    # is.finite() rather than !is.na(): residualise_feature() drops non-finite
+    # values too, and residuals are paired positionally with batch, subject and
+    # stratum below.
+    df <- data[is.finite(data[[feature_name]]) &
                  is.finite(data[["age"]]) &
                  !is.na(data[["sex"]]), ]
 
@@ -589,8 +684,7 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
 
     has_zeros        <- any(df[[feature_name]] == 0, na.rm = TRUE)
     is_positive_only <- rng[1L] > 0 && !has_zeros
-    near_zero        <- !is_positive_only && rng[1L] >= 0 &&
-                        rng[1L] < 0.01 * mean(df[[feature_name]], na.rm = TRUE)
+    near_zero        <- !is_positive_only && rng[1L] == 0
 
     if (has_zeros && !discrete)
       logger::log_info(paste0("  ", feature_name,
@@ -608,6 +702,11 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
 
     if (n_obs < 30L)
       stop("Insufficient observations after filtering (", n_obs, " < 30)")
+
+    strata_vec <- if (isTRUE(stratify))
+      build_strata(df[["age"]], df[["sex"]], n_age_bands) else NULL
+    subj_vec   <- if (!is.null(id_var) && id_var %in% names(df))
+      df[[id_var]] else NULL
 
     fmt_terms <- function(x) {
       if (is.null(x))      return(NA_character_)
@@ -663,7 +762,8 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
 
       zerorate_fn   <- function(x) mean(as.integer(x) == 0L)
       zerorate_perm <- permutation_test_batch_moment(
-        y, df[[batch_var]], zerorate_fn, n_perm, min_batch_n
+        y, df[[batch_var]], zerorate_fn, n_perm, min_batch_n,
+        subjects = subj_vec, strata = strata_vec
       )
       logger::log_info(paste0(
         "  zero-rate batch perm p=",
@@ -677,7 +777,8 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
         if (mu > 0) var(xi) / mu else NA_real_
       }
       dispersion_perm <- permutation_test_batch_moment(
-        y, df[[batch_var]], dispersion_fn, n_perm, min_batch_n
+        y, df[[batch_var]], dispersion_fn, n_perm, min_batch_n,
+        subjects = subj_vec, strata = strata_vec
       )
       logger::log_info(paste0(
         "  dispersion batch perm p=",
@@ -695,7 +796,9 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
         batch_dispersion_range = dispersion_perm$per_batch_range,
         thresholds             = thresholds,
         dispersion_index       = disp_index,
-        tail_heaviness         = tail_h
+        tail_heaviness         = tail_h,
+        batch_zerorate_prange   = zerorate_perm$p_range,
+        batch_dispersion_prange = dispersion_perm$p_range
       )
       logger::log_info(paste0("  tier=",        tier_res$tier,
                               "  ZI=",          tier_res$zero_inflated,
@@ -751,13 +854,17 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
         dispersion_index        = round(disp_index               %||% NA, 4L),
         tail_heaviness          = round(tail_h                   %||% NA, 4L),
         batch_zerorate_pvalue   = round(zerorate_perm$p_value           %||% NA, 4L),
+        batch_zerorate_prange   = round(zerorate_perm$p_range           %||% NA, 4L),
         batch_zerorate_range    = round(zerorate_perm$per_batch_range   %||% NA, 4L),
         batch_zerorate_var      = round(zerorate_perm$observed_variance %||% NA, 4L),
         batch_zerorate_nbatches = zerorate_perm$n_batches_used   %||% NA_integer_,
         batch_disp_pvalue       = round(dispersion_perm$p_value           %||% NA, 4L),
+        batch_disp_prange       = round(dispersion_perm$p_range           %||% NA, 4L),
         batch_disp_range        = round(dispersion_perm$per_batch_range   %||% NA, 4L),
         batch_disp_var          = round(dispersion_perm$observed_variance %||% NA, 4L),
         batch_disp_nbatches     = dispersion_perm$n_batches_used %||% NA_integer_,
+        frac_common             = round(zerorate_perm$frac_common %||% NA, 4L),
+        seed                    = seed %||% NA_integer_,
         tier                    = tier_res$tier,
         zero_inflated           = tier_res$zero_inflated,
         overdispersed           = tier_res$overdispersed,
@@ -781,37 +888,51 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
     # CONTINUOUS PATH
     # =========================================================================
 
-    resid <- residualise_feature(df, feature_name, batch_var)
-    skew  <- compute_skewness(resid)
-    kurt  <- compute_excess_kurtosis(resid)
+    res_fit <- residualise_feature(df, feature_name, batch_var)
+    resid   <- res_fit$residuals
+    skew    <- compute_skewness(resid)
+    kurt    <- compute_excess_kurtosis(resid)
+    skew_st <- compute_skewness(res_fit$studentised)
+    kurt_st <- compute_excess_kurtosis(res_fit$studentised)
 
     logger::log_info(paste0("  skew=", round(skew, 3L),
-                            "  kurt=", round(kurt, 3L)))
+                            "  kurt=", round(kurt, 3L),
+                            "  studentised skew=", round(skew_st, 3L),
+                            "  kurt=", round(kurt_st, 3L)))
+    logger::log_info(paste0("  sigma varies p=", signif(res_fit$sigma_p %||% NA, 3L),
+                            "  CV2(sigma^2)=",   round(res_fit$sigma_cv2 %||% NA, 4L)))
 
     skew_perm <- permutation_test_batch_moment(
-      resid, df[[batch_var]], compute_skewness, n_perm, min_batch_n
+      resid, df[[batch_var]], compute_skewness, n_perm, min_batch_n,
+      subjects = subj_vec, strata = strata_vec
     )
     logger::log_info(paste0(
       "  skew batch perm p=", round(skew_perm$p_value %||% NA, 4L),
-      "  range=",             round(skew_perm$per_batch_range %||% NA, 3L)
+      "  p_range=",           round(skew_perm$p_range %||% NA, 4L),
+      "  range=",             round(skew_perm$per_batch_range %||% NA, 3L),
+      "  frac_common=",       round(skew_perm$frac_common %||% NA, 3L)
     ))
 
     kurt_perm <- permutation_test_batch_moment(
-      resid, df[[batch_var]], compute_excess_kurtosis, n_perm, min_batch_n
+      resid, df[[batch_var]], compute_excess_kurtosis, n_perm, min_batch_n,
+      subjects = subj_vec, strata = strata_vec
     )
     logger::log_info(paste0(
       "  kurt batch perm p=", round(kurt_perm$p_value %||% NA, 4L),
+      "  p_range=",           round(kurt_perm$p_range %||% NA, 4L),
       "  range=",             round(kurt_perm$per_batch_range %||% NA, 3L)
     ))
 
     tier_res <- assign_tier(
-      skewness         = skew,
-      excess_kurtosis  = kurt,
-      batch_skew_pval  = skew_perm$p_value,
-      batch_skew_range = skew_perm$per_batch_range,
-      batch_kurt_pval  = kurt_perm$p_value,
-      batch_kurt_range = kurt_perm$per_batch_range,
-      thresholds       = thresholds
+      skewness          = skew,
+      excess_kurtosis   = kurt,
+      batch_skew_pval   = skew_perm$p_value,
+      batch_skew_range  = skew_perm$per_batch_range,
+      batch_kurt_pval   = kurt_perm$p_value,
+      batch_kurt_range  = kurt_perm$per_batch_range,
+      thresholds        = thresholds,
+      batch_skew_prange = skew_perm$p_range,
+      batch_kurt_prange = kurt_perm$p_range
     )
     logger::log_info(paste0("  tier=", tier_res$tier))
 
@@ -846,14 +967,22 @@ diagnose_feature <- function(data, feature_name, batch_var, id_var,
       is_positive_only    = is_positive_only,
       skewness            = round(skew, 4L),
       excess_kurtosis     = round(kurt, 4L),
+      skewness_stud       = round(skew_st %||% NA, 4L),
+      excess_kurtosis_stud = round(kurt_st %||% NA, 4L),
+      sigma_varies_p      = signif(res_fit$sigma_p   %||% NA, 4L),
+      sigma_cv2           = round(res_fit$sigma_cv2 %||% NA, 4L),
       batch_skew_pvalue   = round(skew_perm$p_value           %||% NA, 4L),
+      batch_skew_prange   = round(skew_perm$p_range           %||% NA, 4L),
       batch_skew_range    = round(skew_perm$per_batch_range    %||% NA, 4L),
       batch_skew_var      = round(skew_perm$observed_variance  %||% NA, 4L),
       batch_skew_nbatches = skew_perm$n_batches_used %||% NA_integer_,
       batch_kurt_pvalue   = round(kurt_perm$p_value           %||% NA, 4L),
+      batch_kurt_prange   = round(kurt_perm$p_range           %||% NA, 4L),
       batch_kurt_range    = round(kurt_perm$per_batch_range    %||% NA, 4L),
       batch_kurt_var      = round(kurt_perm$observed_variance  %||% NA, 4L),
       batch_kurt_nbatches = kurt_perm$n_batches_used %||% NA_integer_,
+      frac_common         = round(skew_perm$frac_common %||% NA, 4L),
+      seed                = seed %||% NA_integer_,
       tier                = tier_res$tier,
       near_gaussian       = tier_res$near_gaussian,
       skew_batch_effect   = tier_res$skew_batch_effect,
@@ -897,14 +1026,21 @@ diagnose_all_features <- function(data, features, output_dir,
                                                            min_zerorate_range   = 0.10,
                                                            min_dispersion_range = 0.50),
                                    user_overrides   = NULL,
-                                   n_cores          = 1L) {
+                                   n_cores          = 1L,
+                                   seed             = 20260818L,
+                                   stratify         = TRUE,
+                                   n_age_bands      = 10L) {
 
   overall_start <- Sys.time()
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   logger::log_info(paste0("Diagnosing ", length(features), " features",
                           if (discrete) " [discrete mode]" else ""))
 
-  diagnose_one <- function(feat) {
+  # Seeding per feature rather than once up front keeps results independent of
+  # n_cores and of how work is distributed across workers.
+  diagnose_one <- function(i) {
+    feat <- features[i]
+    feat_seed <- if (is.null(seed)) NULL else feature_seed(seed, feat)
     diagnose_feature(
       data          = data,
       feature_name  = feat,
@@ -915,26 +1051,39 @@ diagnose_all_features <- function(data, features, output_dir,
       n_perm        = n_perm,
       min_batch_n   = min_batch_n,
       thresholds    = thresholds,
-      user_override = if (!is.null(user_overrides)) user_overrides[[feat]] else NULL
+      user_override = if (!is.null(user_overrides)) user_overrides[[feat]] else NULL,
+      seed          = feat_seed,
+      stratify      = stratify,
+      n_age_bands   = n_age_bands
     )
+  }
+
+  run_one <- function(i) {
+    tryCatch(diagnose_one(i),
+             error = function(e)
+               list(status = "error", feature = features[i],
+                    error_message = e$message, processing_time = 0))
   }
 
   if (n_cores > 1L) {
     cl <- parallel::makeCluster(n_cores)
+    # Covers the unseeded path only; when seed is set, diagnose_feature() pins
+    # both the seed and the RNG kind, which overrides this.
+    if (!is.null(seed)) parallel::clusterSetRNGStream(cl, seed)
     parallel::clusterEvalQ(cl, {
       library(logger)
       logger::log_formatter(logger::formatter_paste)
     })
     parallel::clusterExport(cl,
-      c("data", "batch_var", "id_var", "longitudinal", "discrete",
+      c("data", "features", "batch_var", "id_var", "longitudinal", "discrete",
         "n_perm", "min_batch_n", "thresholds", "user_overrides",
-        "diagnose_one"),
+        "seed", "stratify", "n_age_bands", "diagnose_one"),
       envir = environment()
     )
     parallel::clusterExport(cl,
       c("diagnose_feature", "residualise_feature", "AGE_SPLINE_DF",
         "compute_skewness", "compute_excess_kurtosis",
-        "permutation_test_batch_moment",
+        "permutation_test_batch_moment", "build_strata", "feature_seed",
         "test_zero_inflation", "test_overdispersion",
         "test_underdispersion", "compute_dispersion_index",
         "compute_tail_heaviness",
@@ -944,20 +1093,10 @@ diagnose_all_features <- function(data, features, output_dir,
         "format_time", "%||%"),
       envir = globalenv()
     )
-    results <- pbapply::pblapply(features, function(feat) {
-      tryCatch(diagnose_one(feat),
-               error = function(e)
-                 list(status = "error", feature = feat,
-                      error_message = e$message, processing_time = 0))
-    }, cl = cl)
+    results <- pbapply::pblapply(seq_along(features), run_one, cl = cl)
     parallel::stopCluster(cl)
   } else {
-    results <- lapply(features, function(feat) {
-      tryCatch(diagnose_one(feat),
-               error = function(e)
-                 list(status = "error", feature = feat,
-                      error_message = e$message, processing_time = 0))
-    })
+    results <- lapply(seq_along(features), run_one)
   }
 
   successes <- sum(vapply(results, function(x) x$status == "success", logical(1L)))
@@ -967,18 +1106,25 @@ diagnose_all_features <- function(data, features, output_dir,
                           "od_statistic", "od_pvalue", "dispersion_ratio",
                           "ud_statistic", "ud_pvalue",
                           "dispersion_index", "tail_heaviness",
-                          "batch_zerorate_pvalue", "batch_zerorate_range",
+                          "batch_zerorate_pvalue", "batch_zerorate_prange",
+                          "batch_zerorate_range",
                           "batch_zerorate_var", "batch_zerorate_nbatches",
-                          "batch_disp_pvalue", "batch_disp_range",
+                          "batch_disp_pvalue", "batch_disp_prange",
+                          "batch_disp_range",
                           "batch_disp_var", "batch_disp_nbatches",
                           "zero_inflated", "overdispersed", "underdispersed",
                           "severe_od", "heavy_tail",
                           "zerorate_batch_effect", "dispersion_batch_effect")
-  fields_continuous <- c("batch_skew_pvalue", "batch_skew_range",
+  fields_continuous <- c("skewness_stud", "excess_kurtosis_stud",
+                          "sigma_varies_p", "sigma_cv2",
+                          "batch_skew_pvalue", "batch_skew_prange",
+                          "batch_skew_range",
                           "batch_skew_var", "batch_skew_nbatches",
-                          "batch_kurt_pvalue", "batch_kurt_range",
+                          "batch_kurt_pvalue", "batch_kurt_prange",
+                          "batch_kurt_range",
                           "batch_kurt_var", "batch_kurt_nbatches",
                           "near_gaussian", "skew_batch_effect", "kurt_batch_effect")
+  fields_shared     <- c("frac_common", "seed")
 
   summary_rows <- lapply(results, function(r) {
     base <- data.frame(
@@ -993,7 +1139,7 @@ diagnose_all_features <- function(data, features, output_dir,
       tier             = r$tier             %||% NA_integer_,
       stringsAsFactors = FALSE
     )
-    all_fields <- c(fields_discrete, fields_continuous,
+    all_fields <- c(fields_discrete, fields_continuous, fields_shared,
                     "family_override", "family_order",
                     "mu_terms", "sigma_terms", "nu_terms", "tau_terms")
     for (f in all_fields) base[[f]] <- r[[f]] %||% NA

@@ -101,10 +101,16 @@ with a bounded integer range.
 3. **Zero-inflation test** (Hall & Berenhaut 2002): one-sided z-test comparing
    observed zero count to the Poisson-predicted zero count.
 4. **Overdispersion test** (Cameron-Trivedi 1990): auxiliary regression of
-   `(y - μ)² - y` on `μ`; upper-tail t-test.
+   `((y - μ)² - y) / μ` on `μ`, no intercept; upper-tail t-test. The division
+   by `μ` is what makes the fitted coefficient a constant.
 5. **Underdispersion test**: lower-tail variant of the same auxiliary regression.
-6. **Pearson dispersion index**: `Var(y) / mean(y)` adjusted for covariates.
+6. **Pearson dispersion index**: `mean((y - μ)² / μ)` — the covariate-adjusted
+   Pearson χ² statistic divided by `n`. This is the `dispersion_index` column and
+   is what the "severe OD > 3" gate uses. It is *not* the same as the
+   `dispersion_ratio` column, which is the raw marginal `var(y) / mean(y)`.
 7. **Tail heaviness**: P95/median ratio; values > 5 suggest Sichel-class families.
+   Returns `NA` when the median is 0 (common for sparse counts), and
+   `heavy_tail` is FALSE whenever it is `NA`.
 8. Permutation tests for between-batch variation in zero rate and dispersion ratio.
 9. A count tier and family order are assigned.
 
@@ -114,11 +120,18 @@ with a bounded integer range.
 
 ### Continuous tiers
 
+The conditions are evaluated **in this order** — the batch-effect test is checked
+first, so a feature can be near-Gaussian and still be Tier 3:
+
 | Tier | Conditions | What changes in recommendations |
 |---|---|---|
-| **1** | `|skewness| < thresh_skew` AND `|excess kurtosis| < thresh_kurt` | sigma simplified: `random({batch})` only; nu/tau intercept-only |
-| **2** | Not near-Gaussian, but no batch shape effect | sigma gets full formula `pb(age);sex;random({batch})`; nu/tau intercept-only |
-| **3** | Batch effect detected in skewness **or** kurtosis | As Tier 2 + nu and/or tau also get `random({batch})` |
+| **3** | Batch effect detected in skewness **or** kurtosis | As Tier 2, **plus** `random({batch})` on nu (if the *skewness* effect fired) and/or tau (if the *kurtosis* effect fired) |
+| **1** | No batch shape effect, AND `|skewness| < thresh_skew` AND `|excess kurtosis| < thresh_kurt` | sigma simplified: `random({batch})` only; nu/tau intercept-only |
+| **2** | No batch shape effect, but not near-Gaussian | sigma gets full formula `pb(age);sex;random({batch})`; nu/tau intercept-only |
+
+Note that nu and tau are gated **separately**: a Tier 3 feature flagged only on
+kurtosis gets `tau_terms = random({batch})` with `nu_terms` empty. Check the
+`skew_batch_effect` and `kurt_batch_effect` columns to see which fired.
 
 > **What "batch shape effect" means:** the between-batch variance in skewness (or
 > kurtosis) is significantly larger than expected by chance (p < `thresh_pval`) AND
@@ -131,8 +144,13 @@ with a bounded integer range.
 |---|---|---|
 | **1** | No ZI, no OD, stable dispersion across batches | NBI, ZANBI, ZINBI, PO, ZIP |
 | **2** | Global ZI or OD, or dispersion varies by batch | Same families; signals complex count structure |
-| **3** | Zero rate varies significantly by batch | ZI/hurdle families; nu gets `random({batch})` |
-| **4** | Severe OD (dispersion index > 3) or heavy tail (P95/med > 5) | Sichel-class: ZASICHEL, ZISICHEL, SICHEL |
+| **3** | Zero rate varies significantly by batch | ZI/hurdle families; the zero-probability parameter gets `random({batch})` — nu for 3-parameter families (ZINBI, ZANBI, ZIPIG), tau for the 4-parameter Sichel ones |
+| **4** | Severe OD (dispersion index > 3) or heavy tail (P95/med > 5), **and already at tier ≥ 2** | Sichel-class: ZASICHEL, ZISICHEL, SICHEL |
+
+Tier 4 is a promotion applied on top of tier 2 or 3, not an independent branch.
+A heavy-tailed feature with no zero-inflation, no overdispersion and stable batch
+dispersion stays at **tier 1** and is never promoted — and its family order leads
+with `NBI` rather than the Sichel class.
 
 ---
 
