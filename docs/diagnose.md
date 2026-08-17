@@ -84,10 +84,20 @@ Used for imaging-derived measures, cognitive scores, and any real-valued feature
    spanning childhood growth, adolescent development, adult plateau, and
    late-life decline; a rigid fit can leave residual age curvature that gets
    misattributed to skewness/kurtosis batch effects.
-3. Skewness (Type 1, /n) and excess kurtosis are computed on the residuals.
-4. A permutation test checks whether the between-batch variance in skewness
-   (and kurtosis) is larger than expected by chance.
-5. A tier is assigned and a family list is recommended (Cullen-Frey logic).
+3. A second-stage model of `log(e^2)` on the same design is fitted. This yields
+   `sigma_varies_p` (does the scale depend on age or sex?), `sigma_cv2`, and
+   studentised residuals. Raw residuals from a homoscedastic fit form a scale
+   mixture, which carries excess kurtosis `3 * CV^2(sigma^2)` even when every
+   conditional distribution is Gaussian — so `3 * sigma_cv2` is the share of a
+   feature's kurtosis attributable to varying scale alone. These three are
+   **reported only** and do not drive any decision.
+4. Skewness (Type 1, /n) and excess kurtosis are computed on the residuals, and
+   also on the studentised residuals (`skewness_stud`, `excess_kurtosis_stud`).
+5. A permutation test checks whether the between-batch variance **and** the
+   between-batch range of each moment are larger than expected by chance. Labels
+   are permuted within age-band x sex strata, at the subject level, and strata
+   holding a single batch are dropped — see `--stratify_permutation`.
+6. A tier is assigned and a family list is recommended (Cullen-Frey logic).
 
 ### Discrete / count mode (`--discrete TRUE`)
 
@@ -133,10 +143,19 @@ Note that nu and tau are gated **separately**: a Tier 3 feature flagged only on
 kurtosis gets `tau_terms = random({batch})` with `nu_terms` empty. Check the
 `skew_batch_effect` and `kurt_batch_effect` columns to see which fired.
 
-> **What "batch shape effect" means:** the between-batch variance in skewness (or
-> kurtosis) is significantly larger than expected by chance (p < `thresh_pval`) AND
-> the range across batches exceeds `thresh_skew_range` (or `thresh_kurt_range`). Both
-> conditions must hold to guard against large-sample false positives.
+> **What "batch shape effect" means:** three conditions must all hold for the
+> moment in question.
+>
+> 1. The between-batch **variance** is larger than the permutation null allows
+>    (`batch_*_pvalue` < `thresh_pval`).
+> 2. The between-batch **range** is larger than the permutation null allows
+>    (`batch_*_prange` < `thresh_pval`). This is the effect-size guard, calibrated
+>    against the same null rather than a fixed cut-off, because what counts as a
+>    large range depends on both the batch sizes and the tail weight of the
+>    individual feature.
+> 3. The range clears the absolute floor `thresh_skew_range` /
+>    `thresh_kurt_range`. This is retained as a backstop but is no longer the
+>    discriminating criterion.
 
 ### Discrete tiers
 
@@ -218,13 +237,68 @@ continuous (skewness/kurtosis) and discrete (zero-rate/dispersion) permutation t
 
 ### `--thresh_skew_range` (default: 0.3) and `--thresh_kurt_range` (default: 0.5)
 
-Minimum between-batch range required to declare a skewness (or kurtosis) batch
-effect, in addition to the permutation p-value. This dual criterion prevents
-large-sample artefacts where tiny but statistically significant differences in
-distributional shape are flagged.
+Absolute floor on the between-batch range required to declare a skewness (or
+kurtosis) batch effect. This is now a backstop rather than the operative
+criterion: the effect-size guard is the permutation p-value on the range
+(`batch_*_prange`), which adapts to batch sizes and to the tail weight of the
+individual feature. A fixed constant cannot do that — on lifespan neuroimaging
+data the 95th percentile of the null kurtosis range varies by roughly a factor of
+two between features.
 
-- **Lower** if you want to detect even subtle between-batch shape differences.
+- Leave at the defaults unless you have a substantive reason for a hard minimum.
 - **Raise** to require a larger practical effect before adding batch terms to nu/tau.
+
+### `--seed` (default: 20260818)
+
+Seed for the permutation tests, recorded in the `seed` column of
+`diagnostics_summary.csv`.
+
+Each feature is seeded separately, with the seed derived from the **feature
+name** rather than its position in the run. Two consequences:
+
+- Results do not depend on `--n_cores`, or on how work is distributed across
+  workers.
+- Re-running one feature with `--one_feature` reproduces exactly the p-values it
+  had in a full run. Since both output CSVs are merged by feature key, a
+  subset re-run therefore updates rows without perturbing them.
+
+### `--stratify_permutation` (default: TRUE)
+
+Controls the null used by the batch shape tests.
+
+With `TRUE`, batch labels are permuted only **within age-band × sex strata**, at
+the **subject** level, and strata containing fewer than two batches are dropped.
+The share of rows surviving that restriction is written per feature as
+`frac_common`.
+
+This matters whenever batch is associated with age, which is the norm for
+multi-cohort lifespan data. Under an unconditional permutation every permuted
+batch becomes a random slice of the pooled age range, so the null describes a
+population that does not exist, and any age-varying residual shape is read as a
+batch effect. Permuting subjects rather than rows matters separately, whenever
+participants contribute repeated scans: batch is constant within participant, so
+shuffling rows treats repeat scans as independent and narrows the null.
+
+Set `FALSE` to recover the unconditional test — useful for comparing against a
+previous run. Note that subject-level permutation stays on either way.
+
+Where two batches share no stratum at all, the contrast between them is **not
+identified**: batch and age cannot be separated without an untestable assumption
+about the age trajectory. Stratification excludes those pairs rather than
+answering them, which is why `frac_common` should be reported alongside any
+claim about batch effects on shape. Treat features below roughly 0.3 as weakly
+identified.
+
+### `--n_age_bands` (default: 10)
+
+Number of age quantile bands used to build the strata, crossed with sex. Only
+used when `--stratify_permutation TRUE`.
+
+- **Fewer** bands: coarser age control, more data retained (`frac_common` rises).
+- **More** bands: tighter age control, less data retained.
+
+Worth running at two settings to confirm the conclusion is not an artefact of the
+granularity.
 
 ### `--thresh_zerorate_range` (default: 0.10) — discrete mode only
 
@@ -245,15 +319,33 @@ Key columns for each feature:
 
 | Column | What to look for |
 |---|---|
-| `skewness`, `excess_kurtosis` | Large absolute values (> 1 for skewness, > 2 for kurtosis) suggest non-Gaussian; check `tier` |
-| `batch_skew_pvalue`, `batch_skew_range` | Both small/large together indicate a skewness batch effect |
-| `batch_kurt_pvalue`, `batch_kurt_range` | Same for kurtosis |
+| `seed` | The per-feature seed. Re-running this feature alone reproduces the row exactly. |
+| `skewness`, `excess_kurtosis` | The (s, k) coordinate that chose the family. Large absolute values (> 1 for skewness, > 2 for kurtosis) suggest non-Gaussian; check `tier` |
+| `skewness_stud`, `excess_kurtosis_stud` | Same moments on studentised residuals. A large gap from the raw values means they are partly measuring varying scale — or that the variance model is misbehaving for this feature. Compare before trusting either. |
+| `sigma_varies_p`, `sigma_cv2` | Does the scale depend on age/sex, and how much kurtosis that accounts for. Compare `3 * sigma_cv2` against `excess_kurtosis`. |
+| `frac_common` | **Share of rows the batch test actually used.** Low values mean the batches barely overlap in age for this feature and the test is weakly identified. Treat below ~0.3 as uninterpretable. |
+| `batch_skew_pvalue`, `batch_skew_prange` | Both must clear `thresh_pval` for a skewness batch effect |
+| `batch_kurt_pvalue`, `batch_kurt_prange` | Same for kurtosis |
+| `batch_*_range`, `batch_*_nbatches` | Observed effect size, and how many batches contributed |
+| `near_gaussian` | The pooled-moment condition behind Tier 1 vs 2 |
 | `tier` | 1 = simplest; 3 = most complex formulas recommended |
 | `family_override` | TRUE if you supplied a `--feature_families` CSV that overrode this feature |
 | `error_message` | Non-empty if diagnose failed for this feature; check n_obs and column names |
 
 For discrete features, the additional columns `zi_pvalue`, `od_pvalue`, `ud_pvalue`,
-`dispersion_index`, and `tail_heaviness` give the raw test statistics.
+`dispersion_index`, and `tail_heaviness` give the raw test statistics, and
+`batch_zerorate_prange` / `batch_disp_prange` are the calibrated range guards.
+
+Two cautions when reading these against fitted models:
+
+- `nu_terms` / `tau_terms` record what was **requested**, not what was fitted. The
+  specification that converged appears as a suffix in the `distribution` column of
+  `model_summary.csv` (e.g. `BCT_no_tau`). Check that before concluding a feature
+  carries a batch shape effect.
+- `family_order` is a preference ordering, not a support constraint. `SHASH` and
+  `NO` sit at the tail of every positive-support branch as fallbacks, and fit
+  keeps the first specification that *converges* rather than the best by
+  likelihood.
 
 ---
 
