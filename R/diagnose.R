@@ -416,7 +416,7 @@ suggest_families <- function(skewness, excess_kurtosis,
     lead <- if (is_positive_only) c("BCT", "BCPE", "SHASH") else c("SHASH", "JSU")
     base <- unique(c(lead, base))
   } else if (isTRUE(skew_batch_effect)) {
-    lead <- if (is_positive_only) c("SHASH", "BCT", "BCCG", "GG")
+    lead <- if (is_positive_only) c("BCT", "BCCG", "GG", "SHASH")
             else                  c("SHASH", "JSU", "SN1", "TF")
     base <- unique(c(lead, base))
   }
