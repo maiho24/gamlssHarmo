@@ -22,7 +22,7 @@
 # ---------------------------------------------------------------------------
 
 try_gamlss <- function(mu.formula, sigma.formula, nu.formula, tau.formula,
-                       data, family, n_cyc = 200) {
+                       data, family, n_cyc = 200, c_crit = 0.001) {
   model <- try(gamlss(
     formula       = mu.formula,
     sigma.formula = sigma.formula,
@@ -30,7 +30,7 @@ try_gamlss <- function(mu.formula, sigma.formula, nu.formula, tau.formula,
     tau.formula   = tau.formula,
     data          = data,
     family        = family,
-    control       = gamlss.control(n.cyc = n_cyc, trace = FALSE,
+    control       = gamlss.control(n.cyc = n_cyc, c.crit = c_crit, trace = FALSE,
                                    mu.trace = FALSE, sigma.trace = FALSE)
   ), silent = TRUE)
   if (inherits(model, "try-error") || !isTRUE(model$converged)) return(NULL)
@@ -398,7 +398,8 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
                                    log_transform      = FALSE,
                                    discrete           = FALSE,
                                    family_order       = c("SHASH", "GG", "NO"),
-                                   feature_rec        = NULL) {
+                                   feature_rec        = NULL,
+                                   c_crit             = 0.001) {
   feature_start <- Sys.time()
   dir.create(model_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -535,7 +536,8 @@ fit_gamlss_for_feature <- function(data, feature_name, model_dir,
                           nu.formula    = spec$nu.formula,
                           tau.formula   = spec$tau.formula,
                           data          = model_data,
-                          family        = spec$family_fn())
+                          family        = spec$family_fn(),
+                          c_crit        = c_crit)
       if (!is.null(model)) {
         logger::log_info(paste0("  Converged: ", spec$name,
                                 " | AIC: ", round(AIC(model), 2)))
@@ -719,6 +721,7 @@ run_gamlss_harmonisation <- function(data, features, output_dir, formula_terms,
                                      discrete           = FALSE,
                                      family_order       = c("SHASH", "GG", "NO"),
                                      feature_recs       = NULL,
+                                     c_crit             = 0.001,
                                      n_cores            = 1) {
   overall_start <- Sys.time()
   logger::log_info(paste0("Fitting ", length(features), " features",
@@ -741,7 +744,8 @@ run_gamlss_harmonisation <- function(data, features, output_dir, formula_terms,
       log_transform = log_transform,
       discrete      = discrete,
       family_order  = family_order,
-      feature_rec   = if (!is.null(feature_recs)) feature_recs[[feat]] else NULL
+      feature_rec   = if (!is.null(feature_recs)) feature_recs[[feat]] else NULL,
+      c_crit        = c_crit
     )
   }
 
@@ -757,7 +761,7 @@ run_gamlss_harmonisation <- function(data, features, output_dir, formula_terms,
     parallel::clusterExport(cl,
       c("data", "formula_terms", "batch_var", "id_var", "longitudinal",
         "log_transform", "discrete", "family_order", "feature_recs",
-        "output_dir", "fit_one"),
+        "output_dir", "fit_one", "c_crit"),
       envir = environment()
     )
     parallel::clusterExport(cl,

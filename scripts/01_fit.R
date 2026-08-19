@@ -153,7 +153,17 @@ option_list <- list(
     type    = "integer",
     default = NULL,
     metavar = "N",
-    help    = "Number of parallel cores. 1 runs sequentially. [default: 1]")
+    help    = "Number of parallel cores. 1 runs sequentially. [default: 1]"),
+
+  make_option("--c_crit",
+    type    = "double",
+    default = NULL,
+    metavar = "TOL",
+    help    = paste("Absolute convergence tolerance on the global deviance.",
+                    "gamlss stops when |dev_old - dev_new| < TOL. The default",
+                    "is an absolute threshold, so at large n it demands many",
+                    "significant figures and a stabilised fit may oscillate",
+                    "below it forever. [default: 0.001]"))
 )
 
 parser <- OptionParser(
@@ -206,6 +216,7 @@ longitudinal  <- as.logical(resolve_arg(opt$longitudinal,  cfg$model$longitudina
 log_transform <- as.logical(resolve_arg(opt$log_transform, cfg$model$log_transform, FALSE))
 discrete      <- as.logical(resolve_arg(opt$discrete,      cfg$model$discrete,      FALSE))
 n_cores       <- as.integer(resolve_arg(opt$n_cores, cfg$compute$n_cores, 1L))
+c_crit        <- as.numeric(resolve_arg(opt$c_crit, cfg$model$c_crit, 0.001))
 
 family_order <- if (!is.null(opt$family_order)) {
   trimws(strsplit(opt$family_order, ",")[[1L]])
@@ -231,6 +242,7 @@ log_info(paste0("longitudinal:    ", longitudinal))
 log_info(paste0("discrete:        ", discrete))
 log_info(paste0("log_transform:   ", log_transform))
 log_info(paste0("n_cores:         ", n_cores))
+log_info(paste0("c_crit:          ", c_crit))
 log_info(paste0("feature_families:", families_csv %||% "(not provided)"))
 
 if (is.null(raw_csv) || !nzchar(raw_csv)) {
@@ -288,6 +300,7 @@ results <- run_gamlss_harmonisation(
   discrete      = discrete,
   family_order  = family_order,
   feature_recs  = feature_recs,
+  c_crit        = c_crit,
   n_cores       = n_cores
 )
 
